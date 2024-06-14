@@ -1,7 +1,3 @@
-//
-// Created by 杜坤翰 on 2024/3/9.
-// Updated by 鄭錦鑫 on 2024/6/8
-
 #include <stdio.h>
 #include <stdlib.h> /* 亂數相關函數 */
 #include <time.h>   /* 時間相關函數 */

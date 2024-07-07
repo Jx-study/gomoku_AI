@@ -491,8 +491,8 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         }
         if(win) break;
     }
+    // 後備方案
     if(!found || maxScore <= 0||*bestX>maxX || *bestX<minX|| *bestY>maxY|| *bestY<minY){
-        printf("----------------------------->damn\n");
         for (x = minX; x <= maxX; x++) {
             for (y = minY; y <= maxY; y++) {
                 if(board[y][x] == 0){

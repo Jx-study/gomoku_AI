@@ -15,8 +15,8 @@ initFile('B.txt', 'R')
 def compileC(source_file, output_file):
     subprocess.run(['gcc', source_file, '-o', output_file], check=True)
 
-compileC('playerA.c', 'playerA')
-compileC('playerB.c', 'playerB')
+compileC('playerA_version1.c', 'playerA')
+compileC('playerB_version1.c', 'playerB')
 
 chessProcess = subprocess.Popen(['python', 'chess.py'], stdin=subprocess.PIPE)
 chessProcess.stdin.write(b'A.txt\nB.txt\n')

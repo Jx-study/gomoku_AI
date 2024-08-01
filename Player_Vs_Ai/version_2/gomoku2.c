@@ -69,7 +69,6 @@ int play(int board[MAX][MAX], int player, int ai){
     int winner = 0, chance = 3;
 
     while(1){
-        char text[50];
         int x=0,y=0;    // 坐標
         int minX, maxX, minY, maxY;
         getBounds(board, &minX, &maxX, &minY, &maxY);
@@ -88,7 +87,14 @@ int play(int board[MAX][MAX], int player, int ai){
             printf("Enter coordinate-->x y:");
             scanf("%d %d",&x,&y);
         }else{                  // 是AI回合
+            clock_t start, end;
+            double cpu_time_used;
+
+            start = clock();
             aiRound(board,round, roundCounter,&x,&y, minX, maxX, minY, maxY);
+            end = clock();
+            cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+            printf("spending time of AI: %f s\n", cpu_time_used);
             printf("AI place at (%d,%d)\n", x,y);
         }
 
@@ -96,6 +102,8 @@ int play(int board[MAX][MAX], int player, int ai){
         if(checkUnValid(board, x, y, round) == 1){
             board[y][x] = round;
             updateZobristKey(x,y,round);
+            unsigned long long zobristKey = computeZobristKey(board);
+            printf("Current Zobrist Key: %llu\n", zobristKey);
             print(board);
         }
         else{   //不合法

@@ -9,12 +9,12 @@
 #define MIDPOINT_X 11
 #define MIDPOINT_Y 11
 #define BOARD_MAX 22
-#define MAX_DEPTH 5 // 定義搜索深度
-#define TABLE_SIZE 1000003  // 选择一个合适的大小
+#define MAX_DEPTH 3 // 定義搜索深度
+#define TABLE_SIZE 10000003  // 选择一个合适的大小
 
 
 HashEntry transpositionTable[TABLE_SIZE];
-unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 3 for player 1, player 2
+unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 2 for player 1, player 2
 unsigned long long currentZobristKey = 0;
 
 // 初始化 Zobrist 哈希表
@@ -22,8 +22,10 @@ void initZobristTable() {
     srand(time(NULL));
     for (int i = 0; i < BOARD_MAX; i++) {
         for (int j = 0; j < BOARD_MAX; j++) {
-            for (int k = 0; k < 3; k++) {
-                zobristTable[i][j][k] = ((unsigned long long)rand() << 32) | rand();
+            for (int k = 0; k < 2; k++) {
+                unsigned long long rand1 = (unsigned long long)rand();
+                unsigned long long rand2 = (unsigned long long)rand();
+                zobristTable[i][j][k] = (rand1 << 32) | rand2;
             }
         }
     }
@@ -47,20 +49,36 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
     return key;
 }
 
+
 HashEntry* lookupHashEntry(unsigned long long zobristKey) {
     int index = zobristKey % TABLE_SIZE;
-    if (transpositionTable[index].key == zobristKey) {
-        return &transpositionTable[index];
+    int originalIndex = index;
+    while (transpositionTable[index].key != 0) {
+        if (transpositionTable[index].key == zobristKey) {
+            return &transpositionTable[index];
+        }
+        index = (index + 1) % TABLE_SIZE;
+        if (index == originalIndex) {
+            break;
+        }
     }
     return NULL;
 }
 
 void updateZobristKey(int x, int y, int player) {
-    currentZobristKey ^= zobristTable[x][y][player];  // 异或操作来更新哈希值
+    currentZobristKey ^= zobristTable[x][y][player-1];  // 异或操作来更新哈希值
 }
 
 void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag) {
     int index = zobristKey % TABLE_SIZE;
+    int originalIndex = index;
+    while (transpositionTable[index].key != 0 && transpositionTable[index].key != zobristKey) {
+        index = (index + 1) % TABLE_SIZE;
+        if (index == originalIndex) {
+            printf("Warning: Transposition table is full\n");
+            return;
+        }
+    }
     transpositionTable[index].key = zobristKey;
     transpositionTable[index].depth = depth;
     transpositionTable[index].score = score;
@@ -306,9 +324,6 @@ int evaluatePosition(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, in
         op_line[i] = checkLine(board, x, y, minX, maxX, minY, maxY, 3 - player, i);
     }
     
-    // 目前自己和对手的连线数
-    checkNow(board, minX, maxX, minY, maxY, player, my_now, op_now);
-
     // 進攻策略
     attack   += 500000 * my_line[5] +// 五連
                 10000 * my_line[4] + // 活四
@@ -327,16 +342,6 @@ int evaluatePosition(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, in
                 50 * op_line[2] +    // 活二
                 10 * op_line[6];     // 眠二
     
-    // 若對手已經要有活四(現在已經是活三)，可是我沒有活四/冲四（危險）
-    if (op_line[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
-        if (my_now[5] == 0)
-            defence += 100000; 
-    }
-    // 若對手已經要有冲四(現在已經是眠三)，可是我沒有活四/冲四(非常危險)
-    else if ((op_line[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
-        if (my_now[5] == 0)
-            defence += 20000;
-    }
     // 計算
     if(player == 1){
         total_score +=  2 * attack +  defence ;
@@ -438,12 +443,12 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     }
     
     // 在置換表中查找當前棋盤狀態
-    HashEntry* entry = lookupHashEntry(currentPlayer);
-    
+    HashEntry* entry = lookupHashEntry(currentZobristKey);
+
     // 如果在置換表中找到了當前狀態，並且存儲的深度大於等於當前深度
-    if (entry != NULL && entry->depth >= depth) {
+    if (entry != NULL && entry->depth <= depth) {
         if (entry->flag == 'E') {
-            // 如果是精確值，直接返回
+            printf("bingo\n");
             return entry->score;
         } else if (entry->flag == 'L' && entry->score > alpha) {
             // 如果是下界，更新 alpha 值
@@ -459,19 +464,18 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         }
     }
 
-    int bestScore;
+    int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     if (isMaximizing) {
-        bestScore = INT_MIN;
         // 遍歷所有可能的移動
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 if (board[y][x] == 0) {
-                    if (currentPlayer == 1 && checkUnValid(board, x, y, currentPlayer) != 1) continue;
+                    if (currentPlayer == 1 && checkUnValid(board, x, y, currentPlayer) != 1 && hasAdjacentPiece(board,x,y)) continue;
                     // 嘗試移動
                     board[y][x] = currentPlayer;
                     updateZobristKey(x, y, currentPlayer); // 更新雜湊值
                     // 遞迴呼叫 miniMax，切換到對手回合
-                    int score = miniMax(board, depth - 1, false, currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY, m, n);
+                    int score = miniMax(board, depth - 1, false, 3 - currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY, m, n);
                     // 撤銷移動
                     board[y][x] = 0;
                     updateZobristKey(x, y, currentPlayer); // 還原雜湊值
@@ -483,7 +487,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
                     if (beta <= alpha) break;
                 }
             }
-            if (beta <= alpha) break;
         }
     } else {
         bestScore = INT_MAX;
@@ -491,15 +494,15 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 if (board[y][x] == 0) {
-                    if (currentPlayer == 2 && checkUnValid(board, x, y, 3 - currentPlayer) != 1) continue;
+                    if (currentPlayer == 1 && checkUnValid(board, x, y, currentPlayer) != 1 && hasAdjacentPiece(board,x,y)) continue;
                     // 嘗試移動
-                    board[y][x] = 3 - currentPlayer;
-                    updateZobristKey(x, y, 3 - currentPlayer); // 更新雜湊值
+                    board[y][x] = currentPlayer;
+                    updateZobristKey(x, y, currentPlayer); // 更新雜湊值
                     // 遞迴呼叫 miniMax，切換到對手回合
-                    int score = miniMax(board, depth - 1, true, currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY, m, n);
+                    int score = miniMax(board, depth - 1, true, 3 - currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY, m, n);
                     // 撤銷移動
                     board[y][x] = 0;
-                    updateZobristKey(x, y, 3 - currentPlayer); // 還原雜湊值
+                    updateZobristKey(x, y, currentPlayer); // 還原雜湊值
                     // 更新最佳分數
                     bestScore = (score < bestScore) ? score : bestScore;
                     // 更新 Beta 值
@@ -508,7 +511,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
                     if (beta <= alpha) break;
                 }
             }
-            if (beta <= alpha) break;
         }
     }
 
@@ -526,33 +528,60 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     return bestScore;
 }
 
-// 檢查周圍是否有自己的棋子
-bool hasAdjacentSameColor(int board[BOARD_MAX][BOARD_MAX], int x, int y, int ai) {
-    return (board[y+1][x-1] == ai ||board[y+1][x+1] == ai ||
-            board[y-1][x-1] == ai ||board[y-1][x+1] == ai ||
-            board[y-1][x] == ai || board[y+1][x] == ai ||
-            board[y][x-1] == ai || board[y][x+1] == ai);
+// 檢查5*5周圍是否有棋子
+bool hasAdjacentPiece(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
+    int range = 2;
+    for (int dx = -range; dx <= range; dx++) {
+        for (int dy = -range; dy <= range; dy++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (nx >= 0 && nx < BOARD_MAX && ny >= 0 && ny < BOARD_MAX && board[ny][nx] != 0) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 // 找最佳落子
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY) {
     initTranspositionTable();
-
     int maxScore = INT_MIN; // 初始化最大分數
     int x, y;
     bool found = false; // 判斷是否找到合適位置
     int win = 0;    // 找到勝利之路就停止搜尋
+
+// 首先檢查是否有立即獲勝的機會
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            if (board[y][x] == 0 && !hasAdjacentPiece(board, x, y)) {
+                board[y][x] = ai;
+                if (checkWin(board, minX, maxX, minY, maxY, ai) == ai) {
+                    *bestX = x;
+                    *bestY = y;
+                    board[y][x] = 0;
+                    return;  // 立即返回獲勝移動
+                }
+                board[y][x] = 0;
+            }
+        }
+    }
+
     // 遍歷棋盤上的每個位置
     for (x = minX; x <= maxX; x++) {
         for (y = minY; y <= maxY; y++) {
-            if(board[y][x] == 0){
-                if (ai == 1 && checkUnValid(board, x, y, ai) != 1) continue;
+            if(board[y][x] == 0 && !hasAdjacentPiece(board, x,y)){
+                if ((ai == 1 && checkUnValid(board, x, y, ai) != 1)) continue;
                 else{
                     int depth = MAX_DEPTH;
-                    if(ai == 1) depth++;
-
+                    if(ai == 1) {
+                        if(depth < 5)depth++;
+                        else depth--;
+                    }
                     board[y][x] = ai;
-                    int score = miniMax(board, depth-1, false, ai, ai, INT_MIN, INT_MAX, minX, maxX, minY, maxY,x,y);
+                    updateZobristKey(x,y,ai);
+                    int score = miniMax(board, depth-1, false, 3 - ai, ai, INT_MIN, INT_MAX, minX, maxX, minY, maxY,x,y);
+                    updateZobristKey(x,y,ai);
                     board[y][x] = 0;
                     
                     printf("%d(x:%d,y:%d)\n",score,x,y);
@@ -563,7 +592,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
                         *bestY = y;
                         found = true;
                     }
-                    if(score >= 9999990){
+                    if(score >= 9999999){
                         win = 1;
                         break;
                     }
@@ -572,7 +601,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         }
         if(win) break;
     }
-    if(!found || maxScore <= 0||*bestX>maxX || *bestX<minX|| *bestY>maxY|| *bestY<minY){
+    if(!found || maxScore <= 0){
         printf("----------------------------->damn\n");
         for (x = minX; x <= maxX; x++) {
             for (y = minY; y <= maxY; y++) {

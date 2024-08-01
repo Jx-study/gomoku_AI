@@ -5,10 +5,10 @@
 #include <string.h>
 
 #define BOARD_MAX 22
-#define TABLE_SIZE 1000003
+#define TABLE_SIZE 10000003
 
 typedef struct {
-    unsigned long long key;  // Zobrist 哈希鍵
+    unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
     int depth;               // 搜索深度
     int score;               // 評估分數
     char flag;                // 標誌（精確值、上界、下界）  
@@ -47,9 +47,8 @@ int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
 // AlphaBeta--> MiniMax
 int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int currentPlayer, int ai, int alpha, int beta, int minX, int maxX, int minY, int maxY, int m,int n);
 
-// 檢查周圍是否有自己的棋子
-bool hasAdjacentSameColor(int board[BOARD_MAX][BOARD_MAX], int x, int y, int ai);
-
+// 檢查周圍是否有棋子
+bool hasAdjacentPiece(int board[BOARD_MAX][BOARD_MAX], int x, int y);
 // 找最佳落子
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY);
 

@@ -291,9 +291,9 @@ int evaluatePosition(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, in
     
     // 計算
     if(player == 1){
-        total_score +=  2 * attack +  defence ;
+        total_score +=  2 * attack - defence ;
     }
-    else total_score +=  attack + 2 *defence;
+    else total_score +=  attack - 2 *defence;
     return total_score;
 }
 

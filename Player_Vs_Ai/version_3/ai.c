@@ -167,7 +167,7 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX,
                         count++;
                     } else if (board[ny][nx] == 0) {
                         checkOpen++;
-                        if(checkOpen > 2)
+                        if(checkOpen > 2) break;
                         openEnds++;
                         break; // 遇到空位停止计算
                     } else {

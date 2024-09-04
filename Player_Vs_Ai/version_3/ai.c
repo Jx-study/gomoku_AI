@@ -144,20 +144,21 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
 }
 
 int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX, int minY, int maxY, int player, int num) {
-    int total = 0;  // 有 num 连线的数量
-    int dx[] = {1, 1, 0, -1}; // 水平、垂直、主对角线、副对角线的移动方向
+    int total = 0;  // 有 num 連線的數量
+    int dx[] = {1, 1, 0, -1}; // 水準、垂直、主對角線、副對角線的移動方向
     int dy[] = {0, 1, 1, 1};
 
-    // 检查四个方向
+    // 檢查四個方向
     for (int i = 0; i < 4; i++) {
-        int count = 1; // 包含假设落子的这一个
-        int openEnds = 0; // 记录连线的两端是否开放
+        int count = 1; // 包含假設落子的這一個
+        int openEnds = 0; // 記錄連線的兩端是否開放
+        int op_num = 0; // 對手棋子數量
 
         for (int round = 0; round < 2; round++) {
-            int checkOpen = 0;
+            int consecutiveEmpty = 0; // 連續空位元數目
             for (int j = 1; j < 6; j++) {
-                int nx = x + j * dx[i]; // 计算相邻位置的 x 坐标
-                int ny = y + j * dy[i]; // 计算相邻位置的 y 坐标
+                int nx = x + j * dx[i]; // 計算相鄰位置的 x 座標
+                int ny = y + j * dy[i]; // 計算相鄰位置的 y 座標
                 if (round == 1) { // 反方向
                     nx = x - j * dx[i];
                     ny = y - j * dy[i];
@@ -165,34 +166,32 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX,
                 if (nx >= minX && nx < maxX && ny >= minY && ny < maxY) {
                     if (board[ny][nx] == player) {
                         count++;
+                        consecutiveEmpty = 0; // 重置空位元數目
                     } else if (board[ny][nx] == 0) {
-                        checkOpen++;
-                        if(checkOpen > 2) break;
-                        openEnds++;
-                        break; // 遇到空位停止计算
+                        consecutiveEmpty++;
+                        if (consecutiveEmpty == 1) openEnds++; // 遇到一個空位算一個開放端
+                        if (consecutiveEmpty >= 2) break; // 遇到兩次連續空位停止
                     } else {
-                        break; // 遇到对手棋子停止计算
+                        op_num++;
+                        break; // 遇到對手棋子停止計算
                     }
                 } else {
-                    break; // 超出边界停止计算
+                    break; // 超出邊界停止計算
                 }
             }
         }
 
-        // 勝利條件
-        if(count == 5 && num == 5)total++;
-        // 眠二/眠三/冲四
-        else if(openEnds == 1){
-            if ((num == 6 && count == 2) ||(num == 7 && count == 3) || (num == 8 && count == 4)) total++;
-        }
-        // 活二三四五
-        else if(openEnds == 2){
-            if(count == num) total++;
-        }
-        else if(openEnds > 2){
+        // Debug output
+        //printf("Direction %d: Count = %d, Open Ends = %d, op num = %d\n", i, count, openEnds, op_num);
 
-        }
-        
+        // 判斷是否符合條件
+        if (count == 5 && num == 5) total++;
+        // 眠二/眠三/沖四
+        else if (openEnds == 1 && op_num == 1 && ((num == 6 && count == 2) || (num == 7 && count == 3) || (num == 8 && count == 4))) total++;
+        // 活二、活三、活四、活五
+        else if (openEnds == 2 && count == num && op_num == 0) total++;
+        // 特殊處理某些情況，例如 "X01112"
+        else if (openEnds == 2 && num == 9 && count == 4 && op_num == 1) total++;
     }
     return total;
 }

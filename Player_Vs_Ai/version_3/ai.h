@@ -33,7 +33,7 @@ HashEntry* lookupHashEntry(unsigned long long zobristKey);
 
 void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag);
 
-int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX, int minY, int maxY, int player, int num);
+int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num);
 
 // 檢查指定位置落子後是否形成無效連線（禁手）
 int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player);

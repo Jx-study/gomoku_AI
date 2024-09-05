@@ -483,7 +483,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     int count = moveCount > 15 ? 15 : moveCount;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
-        board[y][x] = ai;
+        board[y][x] = currentPlayer;
         updateZobristKey(x, y, currentPlayer);// 更新雜湊值
         // 遞迴呼叫 miniMax，切換到對手回合
         if (isMaximizing) {

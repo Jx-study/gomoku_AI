@@ -91,27 +91,36 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
 
     // 檢查四個方向
     for (int i = 0; i < 4; i++) {
-        int count = 1; // 包含假設落子的這一個
+        int count = 1;  // 包含假設落子的這一個
+        int maxConnect = 0;   // 最大連綫數
         int openEnds = 0; // 記錄連線的兩端是否開放
         int op_num = 0; // 對手棋子數量
+        int middle_space = 0; // 連綫中是否有空格
+        int max_count = 1;
 
-        for (int round = 0; round < 2; round++) {
-            int consecutiveEmpty = 0; // 連續空位元數目
+        for (int direction = -1; direction <= 1; direction += 2) { // 正反兩個方向
+            int consecutiveEmpty = 0;   // 連續空位數
+            if(max_count== 0)max_count++;
+
             for (int j = 1; j < 6; j++) {
-                int nx = x + j * dx[i]; // 計算相鄰位置的 x 座標
-                int ny = y + j * dy[i]; // 計算相鄰位置的 y 座標
-                if (round == 1) { // 反方向
-                    nx = x - j * dx[i];
-                    ny = y - j * dy[i];
-                }
+                int nx = x + j * dx[i] * direction;
+                int ny = y + j * dy[i] * direction;
+
                 if (nx >= 1 && nx < (BOARD_MAX-1) && ny >= 1 && ny < (BOARD_MAX-1)) {
                     if (board[ny][nx] == player) {
                         count++;
-                        consecutiveEmpty = 0; // 重置空位元數目
+                        max_count++;
+                        if(consecutiveEmpty != 0)middle_space++;     // 中間有空格
+                        if(max_count > maxConnect) maxConnect = max_count;
+                        consecutiveEmpty = 0; // 重置連續空位數
                     } else if (board[ny][nx] == 0) {
                         consecutiveEmpty++;
-                        if (consecutiveEmpty == 1) openEnds++; // 遇到一個空位算一個開放端
-                        if (consecutiveEmpty >= 2) break; // 遇到兩次連續空位停止
+                        if (consecutiveEmpty == 1) max_count = 0;
+                        else if (consecutiveEmpty >= 2){
+                            max_count = maxConnect;
+                            openEnds++;
+                            break; // 遇到兩次連續空位停止
+                        } 
                     } else {
                         if(consecutiveEmpty == 0)op_num++;
                         break; // 遇到對手棋子停止計算
@@ -120,45 +129,48 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
                     break; // 超出邊界停止計算
                 }
             }
+            
         }
 
         // Debug output
-        //printf("Direction %d: Count = %d, Open Ends = %d, op num = %d\n", i, count, openEnds, op_num);
+        //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d\n", i, count, maxConnect,openEnds, op_num);
 
         // 判斷是否符合條件
-        if (count == 5 && num == 5) total++;
-        // 眠二/眠三/沖四
-        else if (openEnds == 1 && op_num == 1 && ((num == 6 && count == 2) || (num == 7 && count == 3) || (num == 8 && count == 4))) total++;
-        // 活二、活三、活四、活五
-        else if (openEnds == 2 && count == num && op_num == 0) total++;
-        // 特殊處理某些情況，例如 "X01112"
-        else if (openEnds == 2 && num == 9 && count == 4 && op_num == 1) total++;
+        // 特殊情況優先處理，例如 "X01112"
+        if(middle_space >= 1){
+            if(num == 9 && count == 4 && maxConnect == 3 && op_num == 1)total++;
+        }
+        
         // 長連
-        else if (count > 5 && num == 10) total++;
+        if(maxConnect > 5 && num == 10) total++;
+        // 五連
+        else if (maxConnect == 5 && num == 5) total++;
+        // 眠二/眠三/沖四
+        else if (openEnds == 1 && op_num == 1 && ((num == 6 && maxConnect == 2) || (num == 7 && maxConnect == 3) || (num == 8 && maxConnect == 4))) total++;
+        // 活二、活三、活四、活五
+        else if (openEnds == 2 && maxConnect == num && op_num == 0) total++;
+        
     }
     return total;
 }
 
-/* 檢查指定位置落子後是否形成無效連線（禁手）
-參數：
-- board: 棋盤的狀態，二維整數陣列表示
-- x: 要檢查的位置的 x 座標
-- y: 要檢查的位置的 y 座標
-- player: 當前玩家的標識（1 或 2）
+/* 檢查指定位置是否有棋子/落子後是否形成禁手
 返回值：
-- 返回1如果落子後形成有效連線，否則返回禁手代碼（-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
+- 返回1如果落子後形成有效連線，否則返回禁手代碼（0：已有棋子，-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
 int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
+    // 已有棋子
     if(board[y][x] != 0) return 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳四]
-    int my_line[11] = {0,0,0,0,0,0,0,0,0,0,0};  // 该位置落子后，自己的连线数
+    if(player == 1){
+        // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳四]
+        int my_line[11] = {0,0,0,0,0,0,0,0,0,0,0};  // 该位置落子后，自己的连线数
 
-    // 更新
-    for (int i = 2; i < 11; i++) {
-        my_line[i] = checkLine(board, x, y,  player, i); 
+        // 更新
+        for (int i = 2; i < 11; i++) {
+            my_line[i] = checkLine(board, x, y,  player, i); 
+        }
+        if(my_line[3] >= 2 || (my_line[4]+my_line[8])>= 2) return -3;
+        else if(my_line[10] >= 1) return -6;
     }
-    if(player == 1 && my_line[3] >= 2 || (my_line[4]+my_line[8])>= 2) return -3;
-    else if(my_line[10] >= 1) return -6;
-    
     return 1; // 有效
 }
 
@@ -180,14 +192,10 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
                     linePositions[0][0] = x;
                     linePositions[0][1] = y;
 
-                    for (round = 0; round < 2; round++) {
-                        for (j = 1; j < 6; j++) {
-                            int nx = x + j * dx[i]; // 计算相邻位置的 x 坐标
-                            int ny = y + j * dy[i]; // 计算相邻位置的 y 坐标
-                            if (round == 1) { // 反方向
-                                nx = x - j * dx[i];
-                                ny = y - j * dy[i];
-                            }
+                    for (int direction = -1; direction <= 1; direction += 2) { // 正反兩個方向
+                        for (int j = 1; j < 6; j++) {
+                            int nx = x + j * dx[i] * direction;
+                            int ny = y + j * dy[i] * direction;
                             if (nx >= minX && nx < maxX && ny >= minY && ny < maxY) {
                                 if (board[ny][nx] == player) {
                                     linePositions[count][0] = nx;
@@ -287,10 +295,10 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
     
     // 進攻策略
-    attack   += 999999 * (my_now[5]/5) +// 五連
-                10000 * (my_now[4]/4) +  // 活四
-                7000 * (my_now[8]/4) +   // 冲四
-                5000 * (my_now[3]/3) +   // 活三
+    attack   += 9999999 * (my_now[5]/5) +// 五連
+                20000 * (my_now[4]/4) +  // 活四
+                14000 * (my_now[8]/4) +   // 冲四
+                7000 * (my_now[3]/3) +   // 活三
                 500 * (my_now[7]/3) +    // 眠三
                 20 * (my_now[2]/2) +     // 活二
                 5 * (my_now[6]/2);      // 眠二
@@ -303,30 +311,30 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 500 * (op_now[7]/3) +    // 眠三
                 20 * (op_now[2]/2) +     // 活二
                 5 * (op_now[6]/2);      // 眠二
-    
-    // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
-    if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
-        if (my_now[5] == 0)
-            defence += 4000; 
+    if(player == 1){
+        // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
+        if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
+            if (my_now[5] == 0)
+                defence += 4000; 
+        }
+        // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
+        else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
+            if (my_now[5] == 0)
+                defence += 1500;
+        }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
+        else if ((op_now[3] > 0) && (my_now[3] == 0)) {
+            if (my_now[4] == 0|| my_now[8] == 0){
+                if(my_now[5] == 0)
+                    defence += 1000;
+            }    
+        }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的(危險)
+        else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
+            if (my_now[4] == 0|| my_now[8] == 0){
+                if(my_now[5] == 0)
+                    defence += 500;
+            }    
+        }
     }
-    // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
-    else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
-        if (my_now[5] == 0)
-            defence += 1500;
-    }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
-    else if ((op_now[3] > 0) && (my_now[3] == 0)) {
-        if (my_now[4] == 0|| my_now[8] == 0){
-            if(my_now[5] == 0)
-                defence += 1000;
-        }    
-    }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的(危險)
-    else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
-        if (my_now[4] == 0|| my_now[8] == 0){
-            if(my_now[5] == 0)
-                defence += 500;
-        }    
-    }
-    
     // 計算
     if(player == 1)total_score +=  attack - 0.2 * 0.7* defence;
     else total_score +=  attack - 0.8 * defence;

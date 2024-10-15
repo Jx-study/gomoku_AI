@@ -6,5 +6,5 @@
 <br><br>
 
 ## 五子棋AI目前進度與問題：
-1.   需要簡化程式和優化演算法，以加快運算速度
-2.   想辦法顯示游戲畫面
+1.   Need to simplify the program to speed up the calculation    
+2.   Added functions of regret, exit, and restart  

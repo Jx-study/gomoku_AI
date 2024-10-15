@@ -11,6 +11,8 @@ wuziqi.py
 test.c
 printchess_v2.spec
 200w.gif
+test.c
+test.exe
 
 # compile file
-*.exe
+//*.exe

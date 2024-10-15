@@ -1,4 +1,3 @@
-#include "ai.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -11,6 +10,17 @@
 #define BOARD_MAX 22
 #define MAX_DEPTH 5 // 定義搜索深度
 #define TABLE_SIZE 10000003  // 选择一个合适的大小
+
+typedef struct {
+    unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
+    int depth;               // 搜索深度
+    int score;               // 評估分數
+    char flag;                // 標誌（精確值、上界、下界）  
+} HashEntry;
+
+typedef struct {
+    int x, y, score;
+} Move;
 
 HashEntry transpositionTable[TABLE_SIZE];
 unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 2 for player 1, player 2
@@ -35,7 +45,7 @@ void initTranspositionTable() {
     memset(transpositionTable, 0, TABLE_SIZE * sizeof(HashEntry));
 }
 
-// 计算初始哈希值
+// 計算初始哈希值
 unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
     unsigned long long key = 0;
     for (int i = 0; i < BOARD_MAX; i++) {
@@ -48,7 +58,7 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
     return key;
 }
 
-
+// 尋找現在哈希值是否有在置換表中
 HashEntry* lookupHashEntry(unsigned long long zobristKey) {
     int index = zobristKey % TABLE_SIZE;
     int originalIndex = index;
@@ -64,10 +74,12 @@ HashEntry* lookupHashEntry(unsigned long long zobristKey) {
     return NULL;
 }
 
+// 更新哈希值
 void updateZobristKey(int x, int y, int player) {
     currentZobristKey ^= zobristTable[x][y][player-1];  // 异或操作来更新哈希值
 }
 
+// 存取哈希值進哈希表
 void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag) {
     int index = zobristKey % TABLE_SIZE;
     int originalIndex = index;
@@ -84,6 +96,7 @@ void storeHashEntry(unsigned long long zobristKey, int depth, int score, char fl
     transpositionTable[index].flag = flag;
 }
 
+// 檢查該位置落子后的連綫數
 int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num) {
     int total = 0;  // 有 num 連線的數量
     int dx[] = {1, 1, 0, -1}; // 水準、垂直、主對角線、副對角線的移動方向
@@ -161,8 +174,7 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
 }
 
 /* 檢查指定位置是否有棋子/落子後是否形成禁手
-返回值：
-- 返回1如果落子後形成有效連線，否則返回禁手代碼（0：已有棋子，-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
+返回值：返回1如果落子後形成有效連線，否則返回禁手代碼（0：已有棋子，-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
 int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     // 已有棋子
     if(board[y][x] != 0) return 0;
@@ -180,6 +192,7 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     return 1; // 有效
 }
 
+// 計算棋盤自己和對手的縂連綫數量
 void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[9]) {
     int visited[BOARD_MAX][BOARD_MAX];
     memset(visited, 0, sizeof(visited)); // 初始化为0，表示未访问过
@@ -358,7 +371,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     return total_score;
 }
 
-// 檢查是否結束
+// 檢查是否有人勝利
 int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int currentPlayer) {
     int my_now[9] = {0,0,0,0,0,0,0,0}, op_now[9] = {0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
     checkNow(board, minX, maxX, minY,  maxY, currentPlayer, my_now);
@@ -392,8 +405,7 @@ int Big_Small(const void* a, const void* b) {
     return moveB->score - moveA->score; // 大到小排序
 }
 
-
-
+// 快速評估落點后排序
 Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX, int minY, int maxY,int player) {
     Move* moves = (Move*)malloc(BOARD_MAX * BOARD_MAX * sizeof(Move));  // 動態分配內存
     if (moves == NULL) {
@@ -424,7 +436,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     return moves;  // 返回指向動態分配的 moves 數組
 }
 
-// Alpha Beta --> minimax
+// Alpha Beta --> minimax函數
 int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int currentPlayer, int ai, int alpha, int beta, int minX, int maxX, int minY, int maxY) {
     // 檢查是否達到搜索深度或遊戲結束
     int result = checkWin(board, minX, maxX, minY, maxY, currentPlayer);
@@ -566,6 +578,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         // 釋放動態分配的內存
         free(moves);
 
+        // 必輸時會崩潰找不到落點
         if(!found || bestScore <= 0){
             printf("----------------------------->damn\n");
             for (x = minX; x <= maxX; x++) {
@@ -589,7 +602,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     }
 }
 
-// 计算当前棋局的最小和最大边界
+// 計算當前棋局的最小和最大邊界
 void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY, int *maxY) {
     *minX = BOARD_MAX;
     *maxX = 1;
@@ -614,6 +627,7 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
     *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX -1;
 }
 
+// AI回合
 void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* bestx, int* besty) {
     int x, y;
     int minX, maxX, minY, maxY;

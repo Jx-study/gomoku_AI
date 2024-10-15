@@ -62,7 +62,7 @@
   ```
 -------------
 ## 版本四介紹：
-- *c函數庫*鏈接python檔案使用  
+- **c函數庫**鏈接python檔案使用  
  ```
 gcc -shared -o ai.dll -fPIC ai.c
 ``` 
@@ -71,8 +71,8 @@ gcc -shared -o ai.dll -fPIC ai.c
  ```
 pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." printchess_v2.py
 ```
-- 完善了判斷禁手規則（10/13已完成）  
+- 完善了判斷禁手規則---》**update function of checkLine()**（10/13已完成）  
 - 增加悔棋、重玩、退出的功能  
 - 簡化程式，去除重複且冗長的代碼  
 - **執行流程：**   
-  1)下載並打開gomoku.exe即可（1個檔案）
+  1)下載並打開**gomoku.exe**即可（1個檔案）

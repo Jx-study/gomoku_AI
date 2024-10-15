@@ -110,19 +110,25 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
                     if (board[ny][nx] == player) {
                         count++;
                         max_count++;
-                        if(consecutiveEmpty != 0)middle_space++;     // 中間有空格
+                        if(consecutiveEmpty != 0){
+                            middle_space++;     // 中間有空格
+                            openEnds--;
+                        }
                         if(max_count > maxConnect) maxConnect = max_count;
                         consecutiveEmpty = 0; // 重置連續空位數
                     } else if (board[ny][nx] == 0) {
                         consecutiveEmpty++;
-                        if (consecutiveEmpty == 1) max_count = 0;
+                        if (consecutiveEmpty == 1) {
+                            max_count = 0;
+                            openEnds++;
+                        }
                         else if (consecutiveEmpty >= 2){
                             max_count = maxConnect;
-                            openEnds++;
                             break; // 遇到兩次連續空位停止
                         } 
                     } else {
                         if(consecutiveEmpty == 0)op_num++;
+                        max_count = maxConnect;
                         break; // 遇到對手棋子停止計算
                     }
                 } else {
@@ -297,7 +303,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     // 進攻策略
     attack   += 9999999 * (my_now[5]/5) +// 五連
                 20000 * (my_now[4]/4) +  // 活四
-                14000 * (my_now[8]/4) +   // 冲四
+                10000 * (my_now[8]/4) +   // 冲四
                 7000 * (my_now[3]/3) +   // 活三
                 500 * (my_now[7]/3) +    // 眠三
                 20 * (my_now[2]/2) +     // 活二
@@ -306,11 +312,12 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     // 防守策略
     defence  += 9999999 * (op_now[5]/5) +// 五連
                 20000 * (op_now[4]/4) +  // 活四
-                14000 * (op_now[8]/4) +   // 冲四
+                10000 * (op_now[8]/4) +   // 冲四
                 7000 * (op_now[3]/3) +   // 活三
                 500 * (op_now[7]/3) +    // 眠三
                 20 * (op_now[2]/2) +     // 活二
                 5 * (op_now[6]/2);      // 眠二
+    
     if(player == 1){
         // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
         if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
@@ -320,24 +327,28 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
         // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
         else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
             if (my_now[5] == 0)
-                defence += 1500;
+                defence += 900;
         }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
         else if ((op_now[3] > 0) && (my_now[3] == 0)) {
             if (my_now[4] == 0|| my_now[8] == 0){
                 if(my_now[5] == 0)
                     defence += 1000;
             }    
-        }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的(危險)
+        }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的
         else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
             if (my_now[4] == 0|| my_now[8] == 0){
                 if(my_now[5] == 0)
-                    defence += 500;
+                    defence += 100;
             }    
         }
     }
+    if(op_now[3]>0 && (op_now[4]>0 ||op_now[8]>0)){
+        defence += 4000; 
+    }
+
     // 計算
     if(player == 1)total_score +=  attack - 0.2 * 0.7* defence;
-    else total_score +=  attack - 0.8 * defence;
+    else total_score +=  attack - 0.8 *defence;
     // 強化防守策略，根據當前的局勢
     // 當對手有優勢時，提高防守的影響力
     if (defence > attack) {

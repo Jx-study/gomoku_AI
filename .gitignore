@@ -1,0 +1,16 @@
+# folder
+.vscode/
+build/
+vs/
+Report/
+image/
+
+# file
+demo.py
+wuziqi.py
+test.c
+printchess_v2.spec
+200w.gif
+
+# compile file
+*.exe

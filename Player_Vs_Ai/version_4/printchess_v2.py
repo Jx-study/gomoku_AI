@@ -16,12 +16,15 @@ class const:
 
 # 定義游戲畫面
 win = GraphWin(title="Gomoku", width = 800, height = 800)
-txt = Text(Point(400,50), "")
-txt.setTextColor(color_rgb(0,0,0))
-txt.setSize(30)
-txt.setFace('courier')
-txt.setStyle("bold")
-txt_round = Text(Point(20,120), "")
+txt_notice = Text(Point(400,50), "")
+txt_notice.setTextColor(color_rgb(0,0,0))
+txt_notice.setSize(30)
+txt_notice.setFace('courier')
+txt_notice.setStyle("bold")
+
+txt_round = Text(Point(45,120), "")
+txt_round.setSize(18)
+txt_round.setFace('helvetica')
 
 p_time = Text(Point(50,600), "")
 p_time.setTextColor(color_rgb(255,0,0))
@@ -86,7 +89,8 @@ def drawWin():
         line = Line(Point(const.MARGIN, const.MARGIN + i * const.GRID), 
                     Point(const.MARGIN + const.LEN, const.MARGIN + i * const.GRID))
         line.draw(win)
-    txt.draw(win)
+    txt_notice.draw(win)
+    txt_round.draw(win)
     p_time.draw(win)
     # 中心點
     n_piece = Circle(Point(100+11*30, 100+11*30),7)
@@ -96,7 +100,7 @@ def drawWin():
 
 # 提示詞
 def notice(string: str):
-    txt.setText(string)
+    txt_notice.setText(string)
     win.update()
 
 def restart():
@@ -171,6 +175,7 @@ def game(board, roundCounter, player, ai):
     while True:
         x, y = 0, 0
         start, end = 0, 0
+        txt_round.setText("回合數:%d"%roundCounter)
 
         if(Round == ai):           # ai回合
             notice("AI正在下棋...")
@@ -186,14 +191,14 @@ def game(board, roundCounter, player, ai):
             y = round((point.getY() - const.MARGIN) / const.GRID)
             end = time.time()
             print(x,y)
-
+            
         # 檢查落子是否合法
         if(check_valid_move(board, x, y, Round) == 1 and 0<x<22 and 0<y<22):
-            piece = Circle(Point(100+x*30, 100+y*30),15)
             board[y][x] = Round
             ai_lib.updateZobristKey(x, y, Round)    # 更新 Zobrist 键
-            
-
+            piece = Circle(Point(100+x*30, 100+y*30),15)
+            txt_num = Text(Point(100+x*30, 100+y*30),"%d"%roundCounter)
+            txt_num.setTextColor("red")
             p_time.setText("耗時%.2fs"%(end-start))
 
             if(Round == 1):
@@ -201,6 +206,7 @@ def game(board, roundCounter, player, ai):
             else:
                 piece.setFill('white')
             piece.draw(win)
+            txt_num.draw(win)
             roundCounter += 1
             
         
@@ -230,7 +236,7 @@ def main():
     roundCounter, board = init()
     drawWin()
     # 選擇先手
-    player, ai = 1,2
+    player, ai = 2, 1
     '''
     point = win.getMouse()
     while(not chooseFisrt(point, player, ai)):

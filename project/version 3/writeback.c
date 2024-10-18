@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <string.h>
 
+
 #define MIDPOINT_X 11
 #define MIDPOINT_Y 11
 #define MAX 22

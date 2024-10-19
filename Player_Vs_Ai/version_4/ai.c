@@ -4,12 +4,46 @@
 #include <limits.h>
 #include <string.h>
 #include <time.h>
+#include <stdint.h> // unsigned long long int.....
 
 #define MIDPOINT_X 11
 #define MIDPOINT_Y 11
 #define BOARD_MAX 22
 #define MAX_DEPTH 7 // 定義搜索深度
 #define TABLE_SIZE 10000003  // 选择一个合适的大小
+
+// 使用 uint16_t 来表示 6 个位置的棋型
+// 每个位置用 2 位表示：00(空), 01(己方), 10(对方)
+typedef uint16_t Pattern;
+
+// 定义常见棋型的位模式
+#define P_LIVE_TWO    0x0105  // .OO..
+#define P_LIVE_THREE  0x0415  // .OOO.
+#define P_LIVE_FOUR   0x1055  // .OOOO.
+#define P_FIVE        0x1555  // OOOOO
+#define P_SLEEP_TWO   0x0401  // .OO..X or X..OO.
+#define P_SLEEP_THREE 0x1015  // .OOO.X or X.OOO.
+#define P_BLOCKED_FOUR 0x4155 // XOOOO. or .OOOOX
+#define P_JUMP_LIVE_THREE 0x0451 // .O.OO. or .OO.O.
+#define P_JUMP_LIVE_FOUR 0x1455  // .OOOO. (with one empty in the middle)
+#define P_JUMP_THREE  0x1051     // XO.OO. or .OO.OX
+#define P_JUMP_FOUR   0x5155     // XO.OOO. or .OOO.OX
+
+// 定義棋型ID
+enum PatternType {
+    NONE = 0,
+    LIVE_TWO = 2,
+    LIVE_THREE = 3,
+    LIVE_FOUR = 4,
+    FIVE = 5,
+    SLEEP_TWO = 6,
+    SLEEP_THREE = 7,
+    BLOCKED_FOUR = 8,
+    JUMP_LIVE_THREE = 9,
+    JUMP_LIVE_FOUR = 10,
+    JUMP_THREE = 11,
+    JUMP_FOUR = 12
+};
 
 typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
@@ -96,6 +130,49 @@ void storeHashEntry(unsigned long long zobristKey, int depth, int score, char fl
     transpositionTable[index].flag = flag;
 }
 
+// 通用的檢查連綫邏輯
+void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, int player, int *count, int *maxConnect, int *openEnds, int *gaps, int *op_num) {
+    int consecutiveEmpty = 0;
+    int max_count = 1;
+
+    for (int direction = -1; direction <= 1; direction += 2) {
+        max_count = 1;  // 每次新的方向重置 max_count
+        consecutiveEmpty = 0;
+        for (int j = 1; j < 6; j++) {
+            int nx = x + j * dx * direction;
+            int ny = y + j * dy * direction;
+
+            if (nx >= 1 && nx < (BOARD_MAX-1) && ny >= 1 && ny < (BOARD_MAX-1)) {
+                if (board[ny][nx] == player) {
+                    (*count)++;
+                    max_count++;
+                    if (consecutiveEmpty != 0) {
+                        (*gaps)++;      // 中間有空格
+                        (*openEnds)--;
+                    }
+                    if (max_count > *maxConnect) *maxConnect = max_count;
+                    consecutiveEmpty = 0;
+                } else if (board[ny][nx] == 0) {
+                    consecutiveEmpty++;
+                    if (consecutiveEmpty == 1) {
+                        max_count = 0;
+                        (*openEnds)++;
+                    } else if (consecutiveEmpty >= 2) {
+                        max_count = *maxConnect;
+                        break;// 遇到兩次連續空位停止
+                    }
+                } else {
+                    if (consecutiveEmpty == 0) (*op_num)++;
+                    max_count = *maxConnect;
+                    break; // 遇到對手棋子停止計算
+                }
+            } else {
+                break; // 超出邊界停止計算
+            }
+        }
+    }
+}
+
 // 檢查該位置落子后的連綫數
 int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num) {
     int total = 0;  // 有 num 連線的數量
@@ -111,45 +188,7 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
         int gaps = 0; // 連綫中是否有空格
         int max_count = 1;
 
-        for (int direction = -1; direction <= 1; direction += 2) { // 正反兩個方向
-            int consecutiveEmpty = 0;   // 連續空位數
-            if(max_count== 0)max_count++;
-
-            for (int j = 1; j < 6; j++) {
-                int nx = x + j * dx[i] * direction;
-                int ny = y + j * dy[i] * direction;
-
-                if (nx >= 1 && nx < (BOARD_MAX-1) && ny >= 1 && ny < (BOARD_MAX-1)) {
-                    if (board[ny][nx] == player) {
-                        count++;
-                        max_count++;
-                        if(consecutiveEmpty != 0){
-                            gaps++;     // 中間有空格
-                            openEnds--;
-                        }
-                        if(max_count > maxConnect) maxConnect = max_count;
-                        consecutiveEmpty = 0; // 重置連續空位數
-                    } else if (board[ny][nx] == 0) {
-                        consecutiveEmpty++;
-                        if (consecutiveEmpty == 1) {
-                            max_count = 0;
-                            openEnds++;
-                        }
-                        else if (consecutiveEmpty >= 2){
-                            max_count = maxConnect;
-                            break; // 遇到兩次連續空位停止
-                        } 
-                    } else {
-                        if(consecutiveEmpty == 0)op_num++;
-                        max_count = maxConnect;
-                        break; // 遇到對手棋子停止計算
-                    }
-                } else {
-                    break; // 超出邊界停止計算
-                }
-            }
-            
-        }
+        checkConsecutive(board, x, y, dx[i], dy[i], player, &count, &maxConnect, &openEnds, &gaps, &op_num);
 
         // Debug output
         //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d\n", i, count, maxConnect,openEnds, op_num);
@@ -216,41 +255,8 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
                     int gaps = 0; // 連綫中是否有空格
                     int max_count = 1;
 
-                    for (int direction = -1; direction <= 1; direction += 2) {
-                        int consecutiveEmpty = 0;
-                        if(max_count== 0)max_count++;
-                        for (int j = 1; j < 6; j++) {
-                            int nx = x + j * dx[i] * direction;
-                            int ny = y + j * dy[i] * direction;
-                            if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) {
-                                if (board[ny][nx] == player) {
-                                    count++;
-                                    max_count++;
-                                    if(consecutiveEmpty != 0){
-                                        gaps++;     // 中間有空格
-                                        openEnds--;
-                                    }
-                                    if(max_count > maxConnect) maxConnect = max_count;
-                                    consecutiveEmpty = 0; // 重置連續空位數
-                                } else if (board[ny][nx] == 0) {
-                                    consecutiveEmpty++;
-                                    if (consecutiveEmpty == 1) {
-                                        max_count = 0;
-                                        openEnds++;
-                                    } else if (consecutiveEmpty >= 2) {
-                                        max_count = maxConnect;
-                                        break;
-                                    }
-                                } else {
-                                    if(consecutiveEmpty == 0)op_num++;
-                                    max_count = maxConnect;
-                                    break; // 遇到對手棋子停止計算
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
+                    checkConsecutive(board, x, y, dx[i], dy[i], player, &count, &maxConnect, &openEnds, &gaps, &op_num);
+                    
                     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
                     if (gaps == 1) {
                         if (op_num == 0) {
@@ -449,7 +455,7 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
     for (int player = currentPlayer; counter <2; player = 3 - player){
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
-                if ((counter==1 &&  3-player == 1 && checkUnValid(board, x, y, 3- player))|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
+                if ((counter==1 &&  3-player == 1 && checkUnValid(board, x, y, 3- player)!= 1)|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
                 else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
                     // ai勝利（直接落子）/ 玩家勝利（防守）
                     board[y][x] = player;
@@ -643,7 +649,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 }
 
 // 找最佳落子
-void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY) {
+void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
     initTranspositionTable();
     int bestScore = INT_MIN; // 初始化最大分數
     bool found = false; // 判斷是否找到合適位置
@@ -651,6 +657,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     int x,y;
     
     int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
+    if (roundCounter <=8 && depth>6) depth -=2;
     Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, ai);
     if (moves == NULL) return;
 
@@ -752,7 +759,7 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
         }
         // 第三手開始
         else{
-            findBestMove(board,&x, &y, ai, minX, maxX, minY, maxY); // 找到最佳位置
+            findBestMove(board,&x, &y, ai, minX, maxX, minY, maxY, roundCounter); // 找到最佳位置
         }
     }
     // 白棋
@@ -767,7 +774,7 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
             }
         }
         else{
-            findBestMove(board,&x, &y, ai, minX, maxX, minY, maxY); // 找到最佳位置
+            findBestMove(board,&x, &y, ai, minX, maxX, minY, maxY, roundCounter); // 找到最佳位置
         }
     }
 

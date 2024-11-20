@@ -5,7 +5,7 @@ import os, sys
 
 # 定義常量+全域變數
 class const:
-    MARGIN = 100       # 棋盤邊距
+    MARGIN = 100      # 棋盤邊距
     GRID = 30         # 每個網格的大小
     NUM = 22          # 棋盤格子數量 (從0到22，總共23個點)
     LEN = 630         # 棋盤的總長度 (NUM-1) * GRID
@@ -22,7 +22,7 @@ txt_notice.setSize(30)
 txt_notice.setFace('courier')
 txt_notice.setStyle("bold")
 
-txt_round = Text(Point(45,120), "")
+txt_round = Text(Point(50,120), "")
 txt_round.setSize(18)
 txt_round.setFace('helvetica')
 
@@ -97,6 +97,61 @@ def drawWin():
     n_piece.setFill('black')
     n_piece.draw(win)
     
+def choose_player(window):
+    # 在現有的視窗上顯示讓玩家選擇先手或後手的畫面
+    # 背景
+    background = Rectangle(Point(250, 250), Point(550, 450))
+    background.setFill(color_rgb(255, 255, 255))
+    background.draw(window)
+
+    # 在視窗中央顯示提示文字
+    message = Text(Point(400, 300), "Choose your role:")
+    message.setTextColor(color_rgb(0, 0, 0))
+    message.draw(window)
+
+    # 建立選擇按鈕
+    black_button = Rectangle(Point(300, 350), Point(400, 400))
+    black_button.setFill(color_rgb(0, 0, 0))
+    black_button.setOutline(color_rgb(255, 255, 255))
+    black_text = Text(Point(350, 375), "Black")
+    black_text.setTextColor(color_rgb(255, 255, 255))
+    black_button.draw(window)
+    black_text.draw(window)
+
+    white_button = Rectangle(Point(400, 350), Point(500, 400))
+    white_button.setFill(color_rgb(255, 255, 255))
+    white_button.setOutline(color_rgb(0, 0, 0))
+    white_text = Text(Point(450, 375), "White")
+    white_button.draw(window)
+    white_text.draw(window)
+
+    # 等待玩家選擇
+    point = window.getMouse()
+    if black_button.getP1().getX() < point.getX() < black_button.getP2().getX() and \
+       black_button.getP1().getY() < point.getY() < black_button.getP2().getY():
+        player, ai = 1, 2
+    elif white_button.getP1().getX() < point.getX() < white_button.getP2().getX() and \
+         white_button.getP1().getY() < point.getY() < white_button.getP2().getY():
+        player, ai = 2, 1
+    else:
+        # 如果玩家點擊了其他地方,則重新選擇
+        background.undraw()
+        message.undraw()
+        black_button.undraw()
+        black_text.undraw()
+        white_button.undraw()
+        white_text.undraw()
+        return choose_player(window)
+
+    # 隱藏選擇畫面
+    background.undraw()
+    message.undraw()
+    black_button.undraw()
+    black_text.undraw()
+    white_button.undraw()
+    white_text.undraw()
+
+    return player, ai
 
 # 提示詞
 def notice(string: str):
@@ -108,18 +163,12 @@ def restart():
 #----------------------------(游戲)----------------------------
 # 初始化
 def init():
-    Round = 1    # 局數計算
+    roundCounter = 1    # 局數計算
     board = [[0 for _ in range(const.BOARD_MAX)] for _ in range(const.BOARD_MAX)] # 初始化棋盤
     ai_lib.initZobristTable()
     ai_lib.initTranspositionTable()
-    return Round, board
+    return roundCounter, board
 
-# 選先手
-def chooseFisrt(point, player, ai):
-    x = point.getX(); y = point.getY()
-    
-
-    return True
 
 # 檢查指定位置落子後是否形成無效連線（禁手）
 def check_valid_move(board, x, y, player):
@@ -170,6 +219,7 @@ def aiMove(board, ai, roundCounter):
 def game(board, roundCounter, player, ai):
     Round = 1   # 1=黑棋回合，2=白棋回合
     winner, chance = 0, 3
+    correct = True
     notice("Start gomoku game ^_^")
     time.sleep(1)
     while True:
@@ -183,7 +233,8 @@ def game(board, roundCounter, player, ai):
             x, y = aiMove(board, ai, roundCounter)
             end = time.time()
         else:                      # 玩家回合
-            if(roundCounter == 1):notice("第一手請落子在正中心位置")
+            if(roundCounter == 1  and correct):notice("第一手請落子在正中心位置")
+            elif(roundCounter == 1  and correct == False): notice("麻煩第一手落子在中心")
             else: notice("玩家正在下棋...")
             start = time.time()
             point = win.getMouse()
@@ -193,6 +244,10 @@ def game(board, roundCounter, player, ai):
             print(x,y)
             
         # 檢查落子是否合法
+        if(roundCounter == 1 and (x != 11 or y != 11)): 
+            correct = False
+            continue
+        
         if(check_valid_move(board, x, y, Round) == 1 and 0<x<22 and 0<y<22):
             board[y][x] = Round
             ai_lib.updateZobristKey(x, y, Round)    # 更新 Zobrist 键
@@ -236,13 +291,7 @@ def main():
     roundCounter, board = init()
     drawWin()
     # 選擇先手
-    player, ai = 2, 1
-    '''
-    point = win.getMouse()
-    while(not chooseFisrt(point, player, ai)):
-        point = win.getMouse()  #除了點擊先手或退出，點擊其他界面無效
-    chooseFisrt(point, player, ai)
-    '''
+    player, ai = choose_player(win)
     # 開始游戲
     result, roundCounter = game(board, roundCounter, player, ai)
     print(roundCounter)

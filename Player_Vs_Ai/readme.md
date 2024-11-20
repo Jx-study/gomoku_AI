@@ -71,7 +71,7 @@ gcc -shared -o ai.dll -fPIC ai.c
  ```
 pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." printchess_v2.py
 ```
-- 完善了判斷禁手規則---》**update function of checkLine()**（10/13已完成）  
+- 完善了判斷連綫情況+禁手規則---》**update function of checkLine()**（10/13已完成） 
 - 增加悔棋、重玩、退出的功能  
 - 簡化程式，去除重複且冗長的代碼  
 - **執行流程：**   

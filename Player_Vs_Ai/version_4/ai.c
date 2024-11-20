@@ -12,39 +12,6 @@
 #define MAX_DEPTH 7 // 定義搜索深度
 #define TABLE_SIZE 10000003  // 选择一个合适的大小
 
-// 使用 uint16_t 来表示 6 个位置的棋型
-// 每个位置用 2 位表示：00(空), 01(己方), 10(对方)
-typedef uint16_t Pattern;
-
-// 定义常见棋型的位模式
-#define P_LIVE_TWO    0x0105  // .OO..
-#define P_LIVE_THREE  0x0415  // .OOO.
-#define P_LIVE_FOUR   0x1055  // .OOOO.
-#define P_FIVE        0x1555  // OOOOO
-#define P_SLEEP_TWO   0x0401  // .OO..X or X..OO.
-#define P_SLEEP_THREE 0x1015  // .OOO.X or X.OOO.
-#define P_BLOCKED_FOUR 0x4155 // XOOOO. or .OOOOX
-#define P_JUMP_LIVE_THREE 0x0451 // .O.OO. or .OO.O.
-#define P_JUMP_LIVE_FOUR 0x1455  // .OOOO. (with one empty in the middle)
-#define P_JUMP_THREE  0x1051     // XO.OO. or .OO.OX
-#define P_JUMP_FOUR   0x5155     // XO.OOO. or .OOO.OX
-
-// 定義棋型ID
-enum PatternType {
-    NONE = 0,
-    LIVE_TWO = 2,
-    LIVE_THREE = 3,
-    LIVE_FOUR = 4,
-    FIVE = 5,
-    SLEEP_TWO = 6,
-    SLEEP_THREE = 7,
-    BLOCKED_FOUR = 8,
-    JUMP_LIVE_THREE = 9,
-    JUMP_LIVE_FOUR = 10,
-    JUMP_THREE = 11,
-    JUMP_FOUR = 12
-};
-
 typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
     int depth;               // 搜索深度
@@ -136,13 +103,13 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
     int max_count = 1;
 
     for (int direction = -1; direction <= 1; direction += 2) {
-        max_count = 1;  // 每次新的方向重置 max_count
+        if(max_count== 0)max_count++;
         consecutiveEmpty = 0;
         for (int j = 1; j < 6; j++) {
             int nx = x + j * dx * direction;
             int ny = y + j * dy * direction;
 
-            if (nx >= 1 && nx < (BOARD_MAX-1) && ny >= 1 && ny < (BOARD_MAX-1)) {
+            if (nx >= 1 && nx < (BOARD_MAX) && ny >= 1 && ny < (BOARD_MAX)) {
                 if (board[ny][nx] == player) {
                     (*count)++;
                     max_count++;
@@ -159,7 +126,7 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
                         (*openEnds)++;
                     } else if (consecutiveEmpty >= 2) {
                         max_count = *maxConnect;
-                        break;// 遇到兩次連續空位停止
+                        break;// 遇到liang次連續空位停止（可能有11001的情況）
                     }
                 } else {
                     if (consecutiveEmpty == 0) (*op_num)++;
@@ -174,8 +141,7 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
 }
 
 // 檢查該位置落子后的連綫數
-int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num) {
-    int total = 0;  // 有 num 連線的數量
+void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
     int dx[] = {1, 1, 0, -1}; // 水準、垂直、主對角線、副對角線的移動方向
     int dy[] = {0, 1, 1, 1};
 
@@ -191,32 +157,44 @@ int checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int num
         checkConsecutive(board, x, y, dx[i], dy[i], player, &count, &maxConnect, &openEnds, &gaps, &op_num);
 
         // Debug output
-        //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d\n", i, count, maxConnect,openEnds, op_num);
+        //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d, gap = %d\n", i, count, maxConnect,openEnds, op_num, gaps);
         // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
         // 判斷是否符合條件
         // 特殊情況優先處理，例如 "X01112"或是"011X10"
         if(gaps == 1){
             if (op_num == 0){
-                if(num == 9 && count == 3 && maxConnect == 2 )total++;
-                if(num == 10 && count == 4 && maxConnect == 3)total++;
+                if(count == 3 && maxConnect == 2 )my_line[9]++;     // 10110
+                if(count == 4 && maxConnect == 3)my_line[10]++;     // 10111...
             }
             else if (op_num == 1){
-                if(num == 11 && count == 3 && maxConnect == 2 )total++;
-                if(num == 12 && count == 4 && maxConnect == 3)total++;
+                if(count == 3 && maxConnect >=1)my_line[11]++;      // 21011  | 210101
+                if(count == 4 && maxConnect >= 2)my_line[12]++;     // 210111 | 211011
             }
-        }
-        else if(gaps == 0){
-            // 長連
-            if(maxConnect > 5 && num == 13) total++;
-            // 五連
-            else if (maxConnect == 5 && num == 5) total++;
-            // 眠二/眠三/沖四
-            else if (openEnds == 1 && op_num == 1 && ((num == 6 && maxConnect == 2) || (num == 7 && maxConnect == 3) || (num == 8 && maxConnect == 4))) total++;
-            // 活二、活三、活四、活五
-            else if (openEnds == 2 && maxConnect == count && maxConnect == num && op_num == 0) total++;
+        }else if(gaps == 2){         
+            if (op_num == 0){
+                if(count == 3 && maxConnect >= 1 )my_line[9]++;     // 10011 | 10101
+            }
+        }else if(gaps == 0) {
+            if (maxConnect > 5) my_line[13]++;     // 長連
+            else if (count == 5 && gaps == 0) my_line[5]++;     // 五连
+            else if (openEnds == 1 && op_num == 1 && maxConnect == 2)my_line[6]++;  // 眠二
+            else if (openEnds == 1 && op_num == 1 && maxConnect == 3)my_line[7]++;  // 眠三
+            else if (openEnds == 1 && op_num == 1&& maxConnect == 4)my_line[8]++;  // 冲四
+            else if (openEnds > 1 && maxConnect >= 2)my_line[maxConnect]++;  // 活二、活三、活四
+
         }
     }
-    return total;
+}
+
+// 計算棋盤自己和對手的縂連綫數量
+void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            if (board[y][x] == player) {
+                checkLine(board,x,y,player,my_now);
+            }
+        }
+    }
 }
 
 /* 檢查指定位置是否有棋子/落子後是否形成禁手
@@ -229,61 +207,12 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
         int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};  // 该位置落子后，自己的连线数
 
         // 更新
-        for (int i = 2; i < 12; i++) {
-            my_line[i] = checkLine(board, x, y,  player, i); 
-        }
+        checkLine(board, x, y, player, my_line);
         if((my_line[3]+my_line[9]) >= 2) return -3;
         else if((my_line[4]+my_line[8]+my_line[10]+my_line[12])>= 2) return -4;
         else if(my_line[13] >= 1) return -6;
     }
     return 1; // 有效
-}
-
-// 計算棋盤自己和對手的縂連綫數量
-void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[13]) {
-    int dx[] = {1, 1, 0, -1};
-    int dy[] = {0, 1, 1, 1};
-
-    for (int x = minX; x <= maxX; x++) {
-        for (int y = minY; y <= maxY; y++) {
-            if (board[y][x] == player) {
-                for (int i = 0; i < 4; i++) {
-                    int count = 1;  // 包含假設落子的這一個
-                    int maxConnect = 0;   // 最大連綫數
-                    int openEnds = 0; // 記錄連線的兩端是否開放
-                    int op_num = 0; // 對手棋子數量
-                    int gaps = 0; // 連綫中是否有空格
-                    int max_count = 1;
-
-                    checkConsecutive(board, x, y, dx[i], dy[i], player, &count, &maxConnect, &openEnds, &gaps, &op_num);
-                    
-                    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-                    if (gaps == 1) {
-                        if (op_num == 0) {
-                            if (count == 3 && maxConnect == 2) my_now[9]++;  // 跳活三 (01011 or 10110)
-                            if (count == 4 && maxConnect == 3) my_now[10]++; // 跳活四 (10111 or 11011)
-                        }
-                        if (op_num == 1) {
-                            if (count == 3 && maxConnect == 2) my_now[11]++;  
-                            if (count == 4 && maxConnect == 3) my_now[12]++; // 跳四 (210111 or 110112)
-                        }
-                    }else if(gaps == 0) {
-                        if (count == 5 && gaps == 0) {
-                            my_now[5]++;  // 五连
-                        } else if (openEnds == 1 && op_num == 1 && maxConnect == 2) {
-                            my_now[6]++;  // 眠二
-                        } else if (openEnds == 1 && op_num == 1 && maxConnect == 3) {
-                            my_now[7]++;  // 眠三
-                        } else if (openEnds == 1 && op_num == 1&& maxConnect == 4) {
-                            my_now[8]++;  // 冲四
-                        } else if (openEnds > 1 && maxConnect >= 2) {
-                            my_now[maxConnect]++;  // 活二、活三、活四
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 // 快速評估函數
@@ -294,10 +223,8 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
     int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 该位置落子后，自己和对手的连线数
 
     // 更新
-    for (int i = 2; i < 14; i++) {
-        my_line[i] = checkLine(board, x, y,  player, i); 
-        op_line[i] = checkLine(board, x, y,  3 - player, i);
-    }
+    checkLine(board, x, y, player, my_line);
+    checkLine(board, x, y, 3-player, op_line);
 
     // 進攻策略 - 提升關鍵連線得分，特別是活四、沖四、跳四
     attack   += 1000000 * my_line[5] +  // 五連
@@ -331,8 +258,7 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 10      * op_line[6];   // 眠二
 
     // 計算
-    total_score += attack + 0.6 * defence;
-
+    total_score += attack + 0.8 * defence;
     // 增加防守
     if(attack <= defence) total_score += 0.1*defence;
     return total_score;
@@ -341,14 +267,14 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
 // 評估函數
 int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY,int player) {
     // 初始化總分(避免劣勢時全部都是負分無法計算)、自己與對手的分數
-    int total_score = 10000, attack = 0, defence = 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳三, 10:跳四]
-    int my_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    int total_score = 12000, attack = 0, defence = 0;
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
 
     // 更新
     checkNow(board, minX, maxX, minY,  maxY, player, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
-    
+    // 優先級：五連>活四>跳活四>冲四=活三>跳四>
     // 進攻策略
     attack   += 9999999 * (my_now[5]/5) +   // 五連
                 20000   * (my_now[4]/4) +   // 活四
@@ -375,55 +301,52 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 20      * (op_now[2]/2) +   // 活二
                 5       * (op_now[6]/2);    // 眠二
     
-    if(player == 1){
-        // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
-        if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
-            if (my_now[5] == 0)
-                defence += 4000; 
-        }
-        // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
-        else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
-            if (my_now[5] == 0)
-                defence += 900;
-        }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
-        else if ((op_now[3] > 0) && (my_now[3] == 0)) {
-            if (my_now[4] == 0|| my_now[8] == 0){
-                if(my_now[5] == 0)
-                    defence += 1000;
-            }    
-        }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的
-        else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
-            if (my_now[4] == 0|| my_now[8] == 0){
-                if(my_now[5] == 0)
-                    defence += 100;
-            }    
-        }
+    // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
+    if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
+        if (my_now[5] == 0)
+            defence += 4000; 
     }
-    if(op_now[3]>0 && (op_now[4]>0 ||op_now[8]>0)){
+    // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
+    else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
+        if (my_now[5] == 0)
+            defence += 900;
+    }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
+    else if ((op_now[3] > 0) && (my_now[3] == 0)) {
+        if (my_now[4] == 0|| my_now[8] == 0){
+            if(my_now[5] == 0)
+                defence += 1000;
+        }    
+    }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的
+    else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
+        if (my_now[4] == 0|| my_now[8] == 0){
+            if(my_now[5] == 0)
+                defence += 100;
+        }    
+    }
+    if((op_now[3]>0 || op_now[9]>0) && (op_now[4]>0 ||op_now[8]>0 || op_now[10]>0)){
         defence += 4000; 
     }
 
     // 計算
-    if(player == 1)total_score +=  attack - 0.2 * 0.7* defence;
-    else total_score +=  attack - 0.8 *defence;
+    if(player == 1)total_score +=  attack - 0.6* defence;
+    else total_score +=  attack - 0.6 *defence;
     // 強化防守策略，根據當前的局勢
     // 當對手有優勢時，提高防守的影響力
     if (defence > attack) {
         total_score -= defence * 0.1;
     }
-
     return total_score;
 }
 
 // 檢查是否有人勝利
 int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int currentPlayer) {
-    int my_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
     checkNow(board, minX, maxX, minY,  maxY, currentPlayer, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - currentPlayer, op_now);
     
     // 若有一方玩家赢了
-    if(my_now[5]>0) return currentPlayer;
-    else if(op_now[5]>0) return 3-currentPlayer; 
+    if((currentPlayer == 2 && my_now[13]>0) ||my_now[5]>0) return currentPlayer;
+    else if((3 - currentPlayer == 2 && op_now[13]>0) || op_now[5]>0) return 3-currentPlayer;
     else return 0; // 没有玩家赢
 }
 
@@ -457,7 +380,7 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
             for (int y = minY; y <= maxY; y++) {
                 if ((counter==1 &&  3-player == 1 && checkUnValid(board, x, y, 3- player)!= 1)|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
                 else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                    // ai勝利（直接落子）/ 玩家勝利（防守）
+                    // ai勝利（直接落子）/ 對手勝利（防守）
                     board[y][x] = player;
                     if (checkWin(board, minX, maxX, minY, maxY, player) == player) {
                         *bestX = x;
@@ -492,25 +415,46 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
         (*count)++;
         return moves;  // 直接返回获胜的棋步
     }
-    
 
-    
-    int my_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[13] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
     // 優先級：五連>活四>跳活四>冲四=活三>跳四>....
     // 檢查連綫
     checkNow(board, minX, maxX, minY,  maxY, player, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
     
+    // 次優先級：對手已有兩個三連綫/23連綫(檢查是否會形成43-》若是眠三冲四不用)，且自己沒有活三以上的連綫（防守)
+    if(op_now[2] > 0 && (op_now[3]+op_now[7]+op_now[9]+op_now[11])/3 >= 1){
+        int op_line[14]={0,0,0,0,0,0,0,0,0,0,0,0,0};
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                if ((3-player == 1 && checkUnValid(board, x, y, 3-player) != 1)|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
+                else if(board[y][x] == 0 && hasAdjacentPiece(board, x, y)){
+                    checkLine(board, x, y, 3-player,op_line);
+                    // 找出可以防守的位子
+                    if ((op_line[3]+op_line[7]+op_line[9]+op_line[11]) == 1 && (op_line[4]+op_line[8]+op_line[10]+op_line[12]) == 1) {
+                        moves[*count].x = x;
+                        moves[*count].y = y;
+                        moves[*count].score = 99999;
+                        (*count)++;
+                    }
+                    memset(op_line, 0, sizeof(op_line));
+                }
+            }
+        }
+        if((*count) != 0)return moves;
+    }
+
     // 次優先級：若自己已經有活三/跳活三必勝了,且對手沒有活三以上的連綫（進攻）
-    if((my_now[3]>0 || my_now[9]>0) && my_now[4]==0 && my_now[10]==0){
+    if(my_now[3]>0 || my_now[9]>0){
         if(op_now[4]==0 && op_now[8]==0 && op_now[10] == 0){
             for (int x = minX; x <= maxX; x++) {
                 for (int y = minY; y <= maxY; y++) {
                     if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
                     else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                        int line_4 = checkLine(board, x, y, player, 4);
-                        if(line_4 >= 1){
+                        int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
+                        checkLine(board, x, y, player, my_line);;
+                        if(my_line[4] >= 1){
                             moves[*count].x = x;
                             moves[*count].y = y;
                             moves[*count].score = 100000;
@@ -519,54 +463,51 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
                     }
                 }
             }
-            return moves;
+            if((*count) != 0)return moves;
         }
     }
     
-    // 第三優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
-    else if(op_now[3]>0 || op_now[9]>0){
-        if(my_now[3]==0 && my_now[4]==0 && my_now[8]==0){
+    // 第四優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
+    if(op_now[3]>0 || op_now[9]>0){
+        if(my_now[3]==0 && my_now[4]==0 && my_now[10]==0){
             // 找出可以防守的位子
             for (int x = minX; x <= maxX; x++) {
                 for (int y = minY; y <= maxY; y++) {
                     if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
                     else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                        int line_4 = checkLine(board, x, y, 3-player, 4);
-                        int line_10 = checkLine(board, x, y, 3-player, 10);
-                        if(line_4 >= 1 || line_10 >= 1){
+                        int op_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
+                        checkLine(board, x, y, 3-player, op_line);
+                        if(op_line[4] >= 1 || op_line[10] >= 1){
                             moves[*count].x = x;
                             moves[*count].y = y;
-                            moves[*count].score = 10000;
+                            moves[*count].score = 88888;
                             (*count)++;
                         }
                     }
                 }
             }
-            return moves;
+            if((*count) != 0)return moves;
         }
     }
 
-    if (*count == 0){
-        // 循環找出有效的棋步
-        for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
-                else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                    int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
-                    if (score == 0) continue;
-
-                    // 保存有效的棋步及其得分
-                    moves[*count].x = x;
-                    moves[*count].y = y;
-                    moves[*count].score = score;
-                    (*count)++;
-                }
+    // 循環找出有效的棋步
+    
+    for (int x = minX; x <= maxX; x++) {
+        for (int y = minY; y <= maxY; y++) {
+            if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+            else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
+                int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
+                if (score == 0) continue;
+                // 保存有效的棋步及其得分
+                moves[*count].x = x;
+                moves[*count].y = y;
+                moves[*count].score = score;
+                (*count)++;
             }
         }
-
-        // 根據玩家選擇排序
-        qsort(moves, *count, sizeof(Move), Big_Small);
     }
+    // 根據玩家選擇排序
+    qsort(moves, *count, sizeof(Move), Big_Small);
 
     return moves;  // 返回指向動態分配的 moves 數組
 }
@@ -605,7 +546,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     int moveCount = 0;
     Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, currentPlayer); 
-    
     int count = moveCount > 12 ? 12 : moveCount;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
@@ -659,10 +599,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
     if (roundCounter <=8 && depth>6) depth -=2;
     Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, ai);
-    if (moves == NULL) return;
-
     int count = moveCount > 15 ? 15 : moveCount;
-    
     for (int i = 0; i < count; i++) {
         x = moves[i].x, y = moves[i].y;
         board[y][x] = ai;
@@ -683,7 +620,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
 
     // 釋放動態分配的內存
     free(moves);
-
+    /*
     // 必輸時會崩潰找不到落點
     if(!found || bestScore <= 0){
         printf("----------------------------->damn\n");
@@ -704,7 +641,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
                 }
             }
         }
-    }
+    }*/
 }
 
 // 計算當前棋局的最小和最大邊界
@@ -746,14 +683,13 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
         
         // 第二步
         else if(roundCounter == 3){ 
-            //浦月開局
-            x = 12;
-            y = 12;
+            x = 10;
+            y = 10;
             if(board[y][x] != 0|| board[10][10] != 0) { 
-                x = 12; // 不懂什麽開局
+                x = 12; 
                 y = 10;
             }else if (board[10][11] != 0 !=0){
-                x = 10; // 不懂什麽開局
+                x = 10; 
                 y = 12;
             }
         }

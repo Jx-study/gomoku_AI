@@ -328,8 +328,8 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     }
 
     // 計算
-    if(player == 1)total_score +=  attack - 0.6* defence;
-    else total_score +=  attack - 0.6 *defence;
+    if(player == 1)total_score +=  attack - 0.7* defence;
+    else total_score +=  attack - 0.7 *defence;
     // 強化防守策略，根據當前的局勢
     // 當對手有優勢時，提高防守的影響力
     if (defence > attack) {
@@ -411,7 +411,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     if(endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)){
         moves[*count].x = bestX;
         moves[*count].y = bestY;
-        moves[*count].score = 9999999;  // 设定一个极高的分数表示获胜棋步
+        moves[*count].score = 9999999;
         (*count)++;
         return moves;  // 直接返回获胜的棋步
     }
@@ -432,7 +432,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
                 else if(board[y][x] == 0 && hasAdjacentPiece(board, x, y)){
                     checkLine(board, x, y, 3-player,op_line);
                     // 找出可以防守的位子
-                    if ((op_line[3]+op_line[7]+op_line[9]+op_line[11]) == 1 && (op_line[4]+op_line[8]+op_line[10]+op_line[12]) == 1) {
+                    if ((op_line[3]+op_line[7]+op_line[9]+op_line[11]) >= 1 && (op_line[4]+op_line[8]+op_line[10]+op_line[12]) >= 1) {
                         moves[*count].x = x;
                         moves[*count].y = y;
                         moves[*count].score = 99999;
@@ -442,7 +442,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
                 }
             }
         }
-        if((*count) != 0)return moves;
+        //if((*count) != 0)return moves;
     }
 
     // 次優先級：若自己已經有活三/跳活三必勝了,且對手沒有活三以上的連綫（進攻）
@@ -469,7 +469,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     
     // 第四優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
     if(op_now[3]>0 || op_now[9]>0){
-        if(my_now[3]==0 && my_now[4]==0 && my_now[10]==0){
+        if(my_now[3]==0 && my_now[4]==0 && my_now[8]==0 && my_now[10]==0){
             // 找出可以防守的位子
             for (int x = minX; x <= maxX; x++) {
                 for (int y = minY; y <= maxY; y++) {
@@ -491,7 +491,6 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     }
 
     // 循環找出有效的棋步
-    
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
             if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;

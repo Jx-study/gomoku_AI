@@ -208,6 +208,7 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
 
         // 更新
         checkLine(board, x, y, player, my_line);
+        if(my_line[5]!=0) return 1;  // 五連與禁手同時形成則不算禁手
         if((my_line[3]+my_line[9]) >= 2) return -3;
         else if((my_line[4]+my_line[8]+my_line[10]+my_line[12])>= 2) return -4;
         else if(my_line[13] >= 1) return -6;
@@ -328,8 +329,8 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     }
 
     // 計算
-    if(player == 1)total_score +=  attack - 0.7* defence;
-    else total_score +=  attack - 0.7 *defence;
+    if(player == 1)total_score +=  attack - 0.6* defence;
+    else total_score +=  attack - 0.8 *defence;
     // 強化防守策略，根據當前的局勢
     // 當對手有優勢時，提高防守的影響力
     if (defence > attack) {
@@ -378,8 +379,7 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
     for (int player = currentPlayer; counter <2; player = 3 - player){
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
-                if ((counter==1 &&  3-player == 1 && checkUnValid(board, x, y, 3- player)!= 1)|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
-                else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
+                if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
                     // ai勝利（直接落子）/ 對手勝利（防守）
                     board[y][x] = player;
                     if (checkWin(board, minX, maxX, minY, maxY, player) == player) {
@@ -394,121 +394,139 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
         }
         counter++;
     }
-    return 0;    
+    return 0;
 }
 
-// 快速評估落點后排序
-Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX, int minY, int maxY,int player) {
-    Move* moves = (Move*)malloc(BOARD_MAX * BOARD_MAX * sizeof(Move));  // 動態分配內存
-    if (moves == NULL) {
+// 啓發式函數Heuristic Function：快速評估落點后排序
+Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX, int minY, int maxY, int player) {
+    Move* moves = (Move*)malloc(BOARD_MAX * BOARD_MAX * sizeof(Move));
+    if (!moves) {
         printf("Memory allocation failed\n");
         return NULL;
     }
     *count = 0;
-    // 最高優先級：自己/對手已要獲勝
-    int bestX = -1, bestY = -1;  // 存储最佳落子位置
-    // 如果 endGame 找到了获胜棋步，直接返回这个棋步
-    if(endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)){
-        moves[*count].x = bestX;
-        moves[*count].y = bestY;
-        moves[*count].score = 9999999;
-        (*count)++;
-        return moves;  // 直接返回获胜的棋步
+
+    // 最高優先級：檢查是否有立即獲勝的棋路
+    int bestX = -1, bestY = -1;
+    if (endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)) {
+        moves[(*count)++] = (Move){bestX, bestY, 9999999};
+        return moves;
     }
 
-    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    // 統計當前AI和玩家的棋形數
+    int my_now[14] = {0}, op_now[14] = {0};
+    checkNow(board, minX, maxX, minY, maxY, player, my_now);
+    checkNow(board, minX, maxX, minY, maxY, 3 - player, op_now);
+    
+    // 策略：條件+分數+檢查對象
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
     // 優先級：五連>活四>跳活四>冲四=活三>跳四>....
-    // 檢查連綫
-    checkNow(board, minX, maxX, minY,  maxY, player, my_now);
-    checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
-    
-    // 次優先級：對手已有兩個三連綫/23連綫(檢查是否會形成43-》若是眠三冲四不用)，且自己沒有活三以上的連綫（防守)
-    if(op_now[2] > 0 && (op_now[3]+op_now[7]+op_now[9]+op_now[11])/3 >= 1){
-        int op_line[14]={0,0,0,0,0,0,0,0,0,0,0,0,0};
+    struct {
+        bool condition;
+        int score;
+        int check_player;
+    } strategy_moves[] = {
+        // 次優先級：對手已有兩個三連綫/23連綫，且自己沒有活三以上的連綫（防守)
+        {
+            op_now[2] > 0 && (op_now[3]+op_now[7]+op_now[9]+op_now[11])/3 >= 1,
+            99999,
+            3 - player  // 檢查對手
+        },
+        
+        // 第三優先級：若自己已經有活三/跳活三必勝了,且對手沒有活三以上的連綫（進攻）
+        {
+            (my_now[3] > 0 || my_now[9] > 0) && 
+            op_now[4] == 0 && op_now[8] == 0 && op_now[10] == 0,
+            100000,
+            player  // 檢查自己
+        },
+        
+        // 第四優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
+        {
+            (op_now[3] > 0 || op_now[9] > 0) && 
+            my_now[3] == 0 && my_now[4] == 0 && my_now[8] == 0 && my_now[10] == 0,
+            88888,
+            3 - player  // 檢查對手
+        },
+        // 第五優先級：無腦冲四
+        {
+            my_now[7]>0 || my_now[11]>0,
+            66666,
+            player      // 檢查自己
+        }
+    };
+
+    // 遍历每种策略
+    for (int strategy = 0; strategy < 4; strategy++) {
+        // 跳过不符合条件的策略
+        if (!strategy_moves[strategy].condition) continue;
+        
+        // 遍历棋盘寻找符合策略的走法
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
-                if ((3-player == 1 && checkUnValid(board, x, y, 3-player) != 1)|| (player == 1 && checkUnValid(board, x, y, player) != 1)) continue;
-                else if(board[y][x] == 0 && hasAdjacentPiece(board, x, y)){
-                    checkLine(board, x, y, 3-player,op_line);
-                    // 找出可以防守的位子
-                    if ((op_line[3]+op_line[7]+op_line[9]+op_line[11]) >= 1 && (op_line[4]+op_line[8]+op_line[10]+op_line[12]) >= 1) {
-                        moves[*count].x = x;
-                        moves[*count].y = y;
-                        moves[*count].score = 99999;
-                        (*count)++;
-                    }
-                    memset(op_line, 0, sizeof(op_line));
+                // 跳过无效位置
+                if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+                if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+
+                // 检查位置的棋型
+                int line[14] = {0};
+                checkLine(board, x, y, strategy_moves[strategy].check_player, line);
+                
+                bool valid_move = false;
+                switch (strategy) {
+                    // 防御多重威胁线
+                    case 0:
+                        valid_move = (line[3] + line[7] + line[9] + line[11]) >= 1 && 
+                                   (line[4] + line[8] + line[10] + line[12]) >= 1;
+                        break;
+                    // 主动创建活四
+                    case 1: 
+                        valid_move = line[4] >= 1;
+                        break;
+                    // 防御对手活四
+                    case 2: 
+                        valid_move = line[4] >= 1 || line[10] >= 1;
+                        break;
+                    // 主动创建冲四
+                    case 3:
+                        valid_move = line[8] >= 1;
+                        break;
                 }
+                
+                // 找到有效走法，添加到列表
+                if (valid_move) {
+                    moves[(*count)++] = (Move){x, y, strategy_moves[strategy].score};
+                }
+                memset(line, 0, sizeof(line));  // 重置line数组
             }
         }
-        //if((*count) != 0)return moves;
+        //if (*count > 0) return moves;
     }
 
-    // 次優先級：若自己已經有活三/跳活三必勝了,且對手沒有活三以上的連綫（進攻）
-    if(my_now[3]>0 || my_now[9]>0){
-        if(op_now[4]==0 && op_now[8]==0 && op_now[10] == 0){
-            for (int x = minX; x <= maxX; x++) {
-                for (int y = minY; y <= maxY; y++) {
-                    if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
-                    else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                        int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
-                        checkLine(board, x, y, player, my_line);;
-                        if(my_line[4] >= 1){
-                            moves[*count].x = x;
-                            moves[*count].y = y;
-                            moves[*count].score = 100000;
-                            (*count)++;
-                        }
-                    }
-                }
-            }
-            if((*count) != 0)return moves;
-        }
-    }
-    
-    // 第四優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
-    if(op_now[3]>0 || op_now[9]>0){
-        if(my_now[3]==0 && my_now[4]==0 && my_now[8]==0 && my_now[10]==0){
-            // 找出可以防守的位子
-            for (int x = minX; x <= maxX; x++) {
-                for (int y = minY; y <= maxY; y++) {
-                    if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
-                    else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                        int op_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0};
-                        checkLine(board, x, y, 3-player, op_line);
-                        if(op_line[4] >= 1 || op_line[10] >= 1){
-                            moves[*count].x = x;
-                            moves[*count].y = y;
-                            moves[*count].score = 88888;
-                            (*count)++;
-                        }
-                    }
-                }
-            }
-            if((*count) != 0)return moves;
-        }
-    }
-
-    // 循環找出有效的棋步
+    // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
+            // 跳过无效位置
             if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
-            else if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
-                if (score == 0) continue;
-                // 保存有效的棋步及其得分
-                moves[*count].x = x;
-                moves[*count].y = y;
-                moves[*count].score = score;
-                (*count)++;
+            if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+
+            // 快速评估位置价值
+            int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
+            if (score != 0) {  // 修改為 != 0
+                moves[(*count)++] = (Move){x, y, score};
             }
         }
     }
-    // 根據玩家選擇排序
-    qsort(moves, *count, sizeof(Move), Big_Small);
 
-    return moves;  // 返回指向動態分配的 moves 數組
+    // 錯誤檢查和排序
+    if (*count == 0) {
+        printf("Error: No valid moves found! Board position might be invalid.\n");
+        free(moves);  // 釋放內存
+        return NULL;
+    }
+
+    qsort(moves, *count, sizeof(Move), Big_Small);
+    return moves;
 }
 
 // Alpha Beta --> minimax函數

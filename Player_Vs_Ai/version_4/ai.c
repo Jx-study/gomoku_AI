@@ -489,7 +489,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
                         break;
                     // 主动创建冲四
                     case 3:
-                        valid_move = line[8] >= 1;
+                        valid_move = line[8] >= 1 || line[10] >= 1 || line[12] >= 1;
                         break;
                 }
                 
@@ -500,9 +500,8 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
                 memset(line, 0, sizeof(line));  // 重置line数组
             }
         }
-        //if (*count > 0) return moves;
     }
-
+    if (*count > 4) return moves;
     // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
@@ -563,7 +562,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     int moveCount = 0;
     Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, currentPlayer); 
-    int count = moveCount > 12 ? 12 : moveCount;
+    int count = moveCount > 10 ? 10 : moveCount;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
         board[y][x] = currentPlayer;
@@ -616,7 +615,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
     if (roundCounter <=8 && depth>6) depth -=2;
     Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, ai);
-    int count = moveCount > 15 ? 15 : moveCount;
+    int count = moveCount > 12 ? 12 : moveCount;
     for (int i = 0; i < count; i++) {
         x = moves[i].x, y = moves[i].y;
         board[y][x] = ai;
@@ -625,7 +624,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         updateZobristKey(x,y,ai);
         board[y][x] = 0;
         
-        printf("%d(x:%d,y:%d)--->%d\n",score,x,y,moves[i].score);
+        //printf("%d(x:%d,y:%d)--->%d\n",score,x,y,moves[i].score);
         if (score > bestScore) {
             bestScore = score;
             *bestX = x;
@@ -637,28 +636,6 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
 
     // 釋放動態分配的內存
     free(moves);
-    /*
-    // 必輸時會崩潰找不到落點
-    if(!found || bestScore <= 0){
-        printf("----------------------------->damn\n");
-        for (x = minX; x <= maxX; x++) {
-            for (y = minY; y <= maxY; y++) {
-                if(board[y][x] == 0){
-                    if (ai == 1 && checkUnValid(board, x, y, ai) != 1) continue; // 使用禁手規則檢查
-                    else{ 
-                        int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY,ai); // 計算放入指定位置后的分數
-                        // 若當前位置的權重值大於當前最大值，更新最大值及對應座標
-                        if (score > bestScore) {
-                            bestScore = score;
-                            *bestX = x;
-                            *bestY = y;
-                            found = true;
-                        }
-                    }
-                }
-            }
-        }
-    }*/
 }
 
 // 計算當前棋局的最小和最大邊界

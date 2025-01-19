@@ -61,18 +61,23 @@
   python printchess.py
   ```
 -------------
-## 版本四介紹：
+## 版本四介紹：（2025/01/09完成）
 - **c函數庫**鏈接python檔案使用  
  ```
 gcc -shared -o ai.dll -fPIC ai.c
 ``` 
 - 優化游戲畫面，并且可進行交互（使用鼠標點擊即可）---》使用**graphic.py**（10/9已完成）  
-- 打包成別人下載即可使用的文件---》使用**pyinstaller**（10/12已完成）  
- ```
-pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." printchess_v2.py
-```
+- 打包成別人下載即可使用的文件---》使用**pyinstaller**（10/12已完成
+  - 指令：
+    ```
+    pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." --hidden-import graphics Gomuko.py
+    ```
+  - 若已有xxx.spec文件，下次打包時可以直接用這個文件，而不需要重新寫命令：
+    ```
+    pyinstaller Gomuko.spec
+    ```
 - 完善了判斷連綫情況+禁手規則---》**update function of checkLine()**（10/13已完成） 
 - 增加悔棋、重玩、退出的功能  
 - 簡化程式，去除重複且冗長的代碼  
 - **執行流程：**   
-  1)下載並打開**gomoku.exe**即可（1個檔案）
+  1)下載並打開**Gomoku.exe**即可（1個檔案）

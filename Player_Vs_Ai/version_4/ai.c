@@ -284,7 +284,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 10000   * (my_now[10]/4)+   // 跳四
                 7000    * (my_now[3]/3) +   // 活三
                 4000    * (my_now[9]/3) +  // 跳活三
-                2000    * (my_now[9]/3) +  // 跳三
+                2000    * (my_now[11]/3) +  // 跳三
                 500     * (my_now[7]/3) +   // 眠三
                 20      * (my_now[2]/2) +   // 活二
                 5       * (my_now[6]/2);    // 眠二
@@ -297,7 +297,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 10000   * (op_now[10]/4)+   // 跳四
                 7000    * (op_now[3]/3) +   // 活三
                 4000    * (op_now[9]/3) +  // 跳活三
-                2000    * (op_now[9]/3) +  // 跳三
+                2000    * (op_now[11]/3) +  // 跳三
                 500     * (op_now[7]/3) +   // 眠三
                 20      * (op_now[2]/2) +   // 活二
                 5       * (op_now[6]/2);    // 眠二

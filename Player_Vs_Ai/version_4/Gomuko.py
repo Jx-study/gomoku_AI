@@ -2,6 +2,8 @@ from graphics import*
 import time     # 延遲執行+記錄運行時間
 import ctypes   # 調用C語言函式庫
 import os, sys
+import tkinter as tk
+from tkinter import Scrollbar
 
 # 定義常量+全域變數
 class const:
@@ -86,6 +88,50 @@ class GameHistory:
     def get_board_state(self):
         return self.board
 
+class RulesWindow:
+    def __init__(self):
+        # 創建一個新的窗口
+        self.win = tk.Tk()
+        self.win.title("Game Rules")
+        self.win.geometry("600x400")  # 設置窗口大小
+
+        # 創建滾動條
+        scrollbar = Scrollbar(self.win)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 創建一個Text控件顯示遊戲規則
+        self.text_widget = tk.Text(self.win, wrap=tk.WORD, yscrollcommand=scrollbar.set)
+        self.text_widget.insert(tk.END, "Gomoku Game Rules:\n\n"
+                                        "1. 勝利條件：五子連綫\n"
+                                        "2. 黑方在棋盤中心落下第1手棋。\n"
+                                        "3.白方在棋盤中心的3x3方格內落下第2手棋。\n"
+                                        "4.黑方在棋盤中心的5x5方格內落下第3手棋，確立26種連珠開局之一。\n"
+                                        "5.白方選擇自己與對方的棋子顏色（稱為「三手交換」）。\n"
+                                        "6.白方在棋盤的空點處落下第4手。\n"
+                                        "7.黑方有三三、四四及長連禁手（包含四三三、三三四...），在連成五子前，無論主動或被動下出禁著點，立即判定為負。換言之，黑方唯一獲勝的可能為下出四三。\n"
+                                        "8.白方無任何禁點，長連亦為勝。\n"
+                                        "9.五連與禁手同時形成則不算禁手，黑方可算獲勝。\n"
+                                        "\n"
+                                        "禁點規則說明：\n"
+                                        "1. 雙活三禁點\n"
+                                        "2. 雙活四禁點\n"
+                                        "3. 長連禁點\n"
+                                        "*注意*：若其中一個三無法形成連四，僅能成為死四，則禁點不成立。此即為「以禁解禁」原則\n"
+                                        "詳細資訊請到 https://587.renju.org.tw/teach/teach018.htm\n")
+        self.text_widget.config(state=tk.DISABLED)  # 禁止編輯
+        self.text_widget.pack(padx=10, pady=10, expand=True, fill=tk.BOTH)
+
+        # 將滾動條綁定到Text控件
+        scrollbar.config(command=self.text_widget.yview)
+
+        # 創建關閉按鈕
+        self.close_button = tk.Button(self.win, text="Close", command=self.win.destroy)
+        self.close_button.pack(pady=10)
+
+    def show(self):
+        self.win.grab_set()  # 禁止父窗口交互，直到關閉規則窗口
+        self.win.wait_window()  # 等待規則窗口關閉
+
 class GameWindow:
     def __init__(self):
         self.win = GraphWin(title="Gomoku", width=800, height=800)
@@ -94,6 +140,7 @@ class GameWindow:
         self.txt_time = None
         self.restart_button = None
         self.undo_button = None
+        self.rules_button = None
 
     def create_text(self, point, size, color, face, style):
         txt = Text(point, "")
@@ -150,8 +197,9 @@ class GameWindow:
         n_piece.draw(self.win)
         
         # 創建按鈕
-        self.restart_button, _ = self.create_button(290, 750, 390, 790, "Restart", "red", "white")
-        self.undo_button, _ = self.create_button(410, 750, 510, 790, "Undo", "green", "white")
+        self.restart_button, _ = self.create_button(210, 745, 310, 785, "Restart", "red", "white")
+        self.undo_button, _ = self.create_button(350, 745, 450, 785, "Undo", "Orange", "white")
+        self.rules_button, _ = self.create_button(490, 745, 590, 785, "Rules", "green", "white")
 
     def get_click(self):
         return self.win.getMouse()
@@ -164,6 +212,9 @@ class GameWindow:
         if (self.undo_button.getP1().getX() < point.getX() < self.undo_button.getP2().getX() and
             self.undo_button.getP1().getY() < point.getY() < self.undo_button.getP2().getY()):
             return "undo"
+        if (self.rules_button.getP1().getX() < point.getX() < self.rules_button.getP2().getX() and
+            self.rules_button.getP1().getY() < point.getY() < self.rules_button.getP2().getY()):
+            return "rules"
         return None
 
     def create_piece(self, x, y, is_black):
@@ -278,11 +329,16 @@ class GomokuGame:
 
     # 檢查指定位置落子後是否形成無效連線（禁手）OR 開局規則下法
     def check_valid_move(self, x, y, player):
-        if self.roundCounter == 1 and (x != 11 or y != 11):
+        if self.roundCounter == 1 and (x != const.MIDPOINT_X or y != const.MIDPOINT_Y):
             return False
-        
+        # (0 <= x,y <= 12)
+        elif self.roundCounter == 2 and (x < const.MIDPOINT_X - 1 or x > const.MIDPOINT_X + 1 or y < const.MIDPOINT_Y - 1 or y > const.MIDPOINT_Y + 1):
+            return False
+        # (9 <= x,y <= 13)
+        elif self.roundCounter == 3 and (x < const.MIDPOINT_X - 2 or x > const.MIDPOINT_X + 2 or y < const.MIDPOINT_Y - 2 or y > const.MIDPOINT_Y + 2):
+            return False
         c_board = self.convert_to_c_board()
-        return (ai_lib.checkUnValid(ctypes.byref(c_board), x, y, player) == 1 and 0 < x < 22 and 0 < y < 22)
+        return (ai_lib.checkUnValid(ctypes.byref(c_board), x, y, player) == 1 and 0 <= x < 22 and 0 <= y < 22)
 
     # 檢查是否有人勝利
     def check_win(self, player):
@@ -304,7 +360,12 @@ class GomokuGame:
     # 處理玩家游戲行為選擇：重新開始/悔棋/其他
     def operation_button(self, point, player, ai):
         clicked_button = self.window.check_button_click(point)
-        if clicked_button == "restart":
+        if clicked_button == "rules":
+            # 打開規則視窗
+            rules_win = RulesWindow()
+            rules_win.show()  # 顯示規則視窗
+            return False
+        elif clicked_button == "restart":
             self.reset_game_state()  # 重置遊戲狀態
             player, ai = self.choose_player()  # 重新選擇玩家角色
             return self.game(player, ai)  # 重新開始遊戲
@@ -344,17 +405,23 @@ class GomokuGame:
                 else:
                     self.window.update_notice("玩家正在下棋...")
                 
-                start_time = time.time()
-                point = self.window.get_click()
-                end_time = time.time()
-                
-                # 處理按鈕行為
-                if self.operation_button(point, player, ai):
-                    continue
+                while True:
+                    start_time = time.time()
+                    point = self.window.get_click()
+                    end_time = time.time()
+                    # 檢查是否點擊了按鈕
+                    if self.operation_button(point, player, ai):
+                        continue
 
-                x = round((point.getX() - const.MARGIN) / const.GRID)
-                y = round((point.getY() - const.MARGIN) / const.GRID)
-                print(f"PLayer Move: ({x}, {y})")
+                    x = round((point.getX() - const.MARGIN) / const.GRID)
+                    y = round((point.getY() - const.MARGIN) / const.GRID)
+                    print(f"Player Move: ({x}, {y})")
+                    # 如果x, y超出棋盤範圍，提示並重新點擊
+                    if 0 <= x <= 21 and 0 <= y <= 21:
+                        break
+                    else:
+                        self.window.update_notice("請點擊棋盤內有效位置")
+                
             # 檢查落子是否合法
             if self.check_valid_move(x, y, current_player):
                 piece = self.window.create_piece(x, y, current_player == 1)

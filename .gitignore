@@ -1,14 +1,44 @@
-# folder
-.vscode/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Distribution / packaging
 build/
+dist/
+*.egg-info/
+*.spec
+
+# PyInstaller
+*.manifest
+*.exe
+
+# C extensions
+*.dll
+*.o
+*.obj
+*.so
+
+# IDE
+.vscode/
+.idea/
 vs/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Folders
 Report/
 image/
+archive/
 
-# file
+# Project specific temporary files
+a.txt
+b.txt
 wuziqi.py
 test.c
 test.exe
-
-# compile file
-//*.exe

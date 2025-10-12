@@ -1,3 +1,6 @@
+import cv2
+import numpy as np
+
 class const:
     class ConstError(TypeError):pass
     def __setattr__(self,name,value):
@@ -57,6 +60,8 @@ def checkWin(data: list):
     if maxCount==const.WIN: return True
     return False
 
+#print(checkWin([0,1,1,1,0,0,1,1,1,0,1,1,1,1,1,1,0,1,0]))
+
 def checkBoardColumns(board: list):
     for d in board:                 # 檢查 board 矩陣 直欄是否連續 N 個
         if checkWin(d)==True:
@@ -90,27 +95,27 @@ def checkBoardSlashLR(board: list):
             return True               
     return False
 
-# 已修正邏輯錯誤
 def checkBoardSlashRL(board: list):
     LEN = len(board)
     for i in range(LEN):     # 檢查 board 矩陣，右上斜向左下，下三角，是否連續 N 個
+        x, y, t = (LEN-1), i, []
+        while True:
+            if x<0 or y>=LEN: break
+            t.append(board[x][y])   #      
+            x -= 1
+            y += 1
+        if checkWin(t)==True:
+            return True       
+
+    for i in range(LEN-1):     # # 檢查 board 矩陣，右上斜向左下，上三角，是否連續 N 個
         x, y, t = i, 0, []
         while True:
-            if x < 0 or y >= LEN: break
-            t.append(board[x][y])
+            if x<0 or y>=LEN: break
+            t.append(board[x][y])        
             x -= 1
             y += 1
-        if checkWin(t): return True
-
-    for i in range(1, LEN):  # 檢查 board 矩陣，右上斜向左下，上三角，是否連續 N 個
-        x, y, t = LEN - 1, i
-        while True:
-            if x < 0 or y >= LEN: break
-            t.append(board[x][y])
-            x -= 1
-            y += 1
-        if checkWin(t): return True
-    
+        if checkWin(t)==True:
+            return True               
     return False
     
 def isGameOver(chess: Chess, player: int):
@@ -124,24 +129,23 @@ def isGameOver(chess: Chess, player: int):
             if (i, j) in data:
                 board[i][j]=1
     
-    if checkBoardColumns(board): return True    
-    if checkBoardRows(board): return True    
-    if checkBoardSlashLR(board): return True        
-    if checkBoardSlashRL(board): return True  # 新增這行以檢查右上到左下的斜線
+    if checkBoardColumns(board)==True: return True    
+    if checkBoardRows(board)==True: return True    
+    if checkBoardSlashLR(board)==True: return True        
     
     return False
 
 def testGameOver():
     chess = Chess()
     player = 1
-    data = [(1, 1, 1), (2, 2, 1), (3, 3, 1), (4, 4, 1), (5, 5, 1)]
+    data = [(1, 1, 1), (1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1), (1, 7, 1)]
     for d in data:
         chess.setXY(d[0], d[1], player)
-    
-    flag = isGameOver(chess, player)
+        
+    flag = gameOver(chess, player)
     print(flag, player)    
 
-# testGameOver() 測試新函數
+#testGameOver()    
 
 def readCord(fileName: str):
     while True:
@@ -224,4 +228,4 @@ def main():
     #cv2.waitKey(2000)
     cv2.destroyAllWindows()            
 
-main()
+main()    

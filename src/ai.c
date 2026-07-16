@@ -52,7 +52,7 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
     for (int i = 0; i < BOARD_MAX; i++) {
         for (int j = 0; j < BOARD_MAX; j++) {
             if (board[i][j] != 0) {
-                key ^= zobristTable[i][j][board[i][j]];
+                key ^= zobristTable[i][j][board[i][j] - 1];
             }
         }
     }
@@ -532,8 +532,20 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
 int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int currentPlayer, int ai, int alpha, int beta, int minX, int maxX, int minY, int maxY) {
     // 檢查是否達到搜索深度或遊戲結束
     int result = checkWin(board, minX, maxX, minY, maxY, currentPlayer);
-    if (depth == 0 || result != 0) {
-        // 到達葉子節點，返回評估分數
+
+    // 如果遊戲結束，添加深度獎勵（越早勝利分數越高）
+    if (result != 0) {
+        if (result == ai) {
+            // AI 勝利：基礎分 + 深度獎勵（depth 越大表示越早勝利）
+            return 10000000 + depth * 10000;
+        } else {
+            // AI 失敗：基礎懲罰 - 深度懲罰（depth 越大表示越晚失敗，懲罰較小）
+            return -10000000 - depth * 10000;
+        }
+    }
+
+    // 到達搜索深度限制，返回靜態評估分數
+    if (depth == 0) {
         return evaluate(board, minX, maxX, minY, maxY, ai);
     }
 
@@ -543,7 +555,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     // 如果在置換表中找到了當前狀態，並且存儲的深度大於等於當前深度
     if (entry != NULL && entry->depth <= depth) {
         if (entry->flag == 'E') {
-            printf("bingo\n");
             return entry->score;
         } else if (entry->flag == 'L' && entry->score > alpha) {
             // 如果是下界，更新 alpha 值

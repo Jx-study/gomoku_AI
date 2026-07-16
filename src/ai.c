@@ -385,19 +385,14 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
 }
 
 // 啓發式函數Heuristic Function：快速評估落點后排序
-Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX, int minY, int maxY, int player) {
-    Move* moves = (Move*)malloc(BOARD_MAX * BOARD_MAX * sizeof(Move));
-    if (!moves) {
-        printf("Memory allocation failed\n");
-        return NULL;
-    }
+void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int minX, int maxX, int minY, int maxY, int player) {
     *count = 0;
 
     // 最高優先級：檢查是否有立即獲勝的棋路
     int bestX = -1, bestY = -1;
     if (endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)) {
         moves[(*count)++] = (Move){bestX, bestY, 9999999};
-        return moves;
+        return;
     }
 
     // 統計當前AI和玩家的棋形數
@@ -488,7 +483,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
             }
         }
     }
-    if (*count > 4) return moves;
+    if (*count > 4) return;
     // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
@@ -507,12 +502,10 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     // 錯誤檢查和排序
     if (*count == 0) {
         printf("Error: No valid moves found! Board position might be invalid.\n");
-        free(moves);  // 釋放內存
-        return NULL;
+        return;
     }
 
     qsort(moves, *count, sizeof(Move), Big_Small);
-    return moves;
 }
 
 // Alpha Beta --> minimax函數
@@ -559,7 +552,9 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
     int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     int moveCount = 0;
-    Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, currentPlayer); 
+    Move moves[BOARD_MAX * BOARD_MAX];
+    sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, currentPlayer);
+    if (moveCount == 0) return isMaximizing ? INT_MIN : INT_MAX;
     int count = moveCount > 10 ? 10 : moveCount;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
@@ -584,9 +579,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         // Alpha-Beta 剪枝
         if (alpha >= beta) break;
     }
-
-     // 釋放動態分配的內存
-    free(moves);
 
     // 在返回分數之前，將結果存儲到置換表中
     char flag;
@@ -616,7 +608,8 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     
     int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
     if (roundCounter <=8 && depth>6) depth -=2;
-    Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, ai);
+    Move moves[BOARD_MAX * BOARD_MAX];
+    sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, ai);
     int count = moveCount > 12 ? 12 : moveCount;
     for (int i = 0; i < count; i++) {
         x = moves[i].x, y = moves[i].y;
@@ -635,9 +628,6 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         }
         //if (bestScore > 10000000) break;
     }
-
-    // 釋放動態分配的內存
-    free(moves);
 }
 
 // 計算當前棋局的最小和最大邊界

@@ -10,7 +10,8 @@
 #define MIDPOINT_Y 11
 #define BOARD_MAX 22
 #define MAX_DEPTH 7 // 定義搜索深度
-#define TABLE_SIZE 10000003  // 选择一个合适的大小
+#define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
+#define TABLE_MASK (TABLE_SIZE - 1)
 
 typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
@@ -61,16 +62,9 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
 
 // 尋找現在哈希值是否有在置換表中
 HashEntry* lookupHashEntry(unsigned long long zobristKey) {
-    int index = zobristKey % TABLE_SIZE;
-    int originalIndex = index;
-    while (transpositionTable[index].key != 0) {
-        if (transpositionTable[index].key == zobristKey) {
-            return &transpositionTable[index];
-        }
-        index = (index + 1) % TABLE_SIZE;
-        if (index == originalIndex) {
-            break;
-        }
+    int index = zobristKey & TABLE_MASK;
+    if (transpositionTable[index].key == zobristKey) {
+        return &transpositionTable[index];
     }
     return NULL;
 }
@@ -82,19 +76,12 @@ void updateZobristKey(int x, int y, int player) {
 
 // 存取哈希值進哈希表
 void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag) {
-    int index = zobristKey % TABLE_SIZE;
-    int originalIndex = index;
-    while (transpositionTable[index].key != 0 && transpositionTable[index].key != zobristKey) {
-        index = (index + 1) % TABLE_SIZE;
-        if (index == originalIndex) {
-            printf("Warning: Transposition table is full\n");
-            return;
-        }
-    }
-    transpositionTable[index].key = zobristKey;
+    int index = zobristKey & TABLE_MASK;
+    // Always-replace: 直接覆蓋，不管舊 entry 是什麼
+    transpositionTable[index].key   = zobristKey;
     transpositionTable[index].depth = depth;
     transpositionTable[index].score = score;
-    transpositionTable[index].flag = flag;
+    transpositionTable[index].flag  = flag;
 }
 
 // 通用的檢查連綫邏輯
@@ -553,7 +540,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     HashEntry* entry = lookupHashEntry(currentZobristKey);
 
     // 如果在置換表中找到了當前狀態，並且存儲的深度大於等於當前深度
-    if (entry != NULL && entry->depth <= depth) {
+    if (entry != NULL && entry->depth >= depth) {
         if (entry->flag == 'E') {
             return entry->score;
         } else if (entry->flag == 'L' && entry->score > alpha) {
@@ -617,7 +604,11 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
 // 找最佳落子
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
-    initTranspositionTable();
+    static bool ttInitialized = false;
+    if (!ttInitialized) {
+        initTranspositionTable();
+        ttInitialized = true;
+    }
     int bestScore = INT_MIN; // 初始化最大分數
     bool found = false; // 判斷是否找到合適位置
     int moveCount = 0;

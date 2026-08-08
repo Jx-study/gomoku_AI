@@ -257,10 +257,12 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 50      * op_line[2] +  // 活二
                 10      * op_line[6];   // 眠二
 
-    // 計算
-    total_score += attack + 0.8 * defence;
+    // 計算（整數運算：避免浮點轉換的精度損耗）
+    // 注意：此處是 attack + defence（排序用：攻或防有價值的點都該排前面），
+    // 與 evaluate 的 attack - defence 聚合方式不同，是刻意設計，不要「順手統一」。
+    total_score += attack + defence * 4 / 5;
     // 增加防守
-    if(attack <= defence) total_score += 0.1*defence;
+    if(attack <= defence) total_score += defence / 10;
     return total_score;
 }
 
@@ -327,13 +329,15 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
         defence += 4000; 
     }
 
-    // 計算
-    if(player == 1)total_score +=  attack - 0.6* defence;
-    else total_score +=  attack - 0.8 *defence;
+    // 計算（整數運算：避免浮點轉換的精度損耗）
+    // 0.6 / 0.8 係數是「執黑 vs 執白時激進程度不同」的調參選擇（ai 在一局內固定，
+    // 單次搜索內為常數），非正確性問題；是否統一留待 Texel tuning 決定。
+    if(player == 1)total_score +=  attack - defence * 3 / 5;
+    else total_score +=  attack - defence * 4 / 5;
     // 強化防守策略，根據當前的局勢
     // 當對手有優勢時，提高防守的影響力
     if (defence > attack) {
-        total_score -= defence * 0.1;
+        total_score -= defence / 10;
     }
     return total_score;
 }

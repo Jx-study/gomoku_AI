@@ -17,7 +17,8 @@ typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
     int depth;               // 搜索深度
     int score;               // 評估分數
-    char flag;                // 標誌（精確值、上界、下界）  
+    char flag;                // 標誌（精確值、上界、下界）
+    signed char bestX, bestY; // 此局面的最佳走法（座標範圍 1-21，-1 表無記錄）
 } HashEntry;
 
 typedef struct {
@@ -75,13 +76,15 @@ void updateZobristKey(int x, int y, int player) {
 }
 
 // 存取哈希值進哈希表
-void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag) {
+void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag, int bestX, int bestY) {
     int index = zobristKey & TABLE_MASK;
     // Always-replace: 直接覆蓋，不管舊 entry 是什麼
     transpositionTable[index].key   = zobristKey;
     transpositionTable[index].depth = depth;
     transpositionTable[index].score = score;
     transpositionTable[index].flag  = flag;
+    transpositionTable[index].bestX = (signed char)bestX;
+    transpositionTable[index].bestY = (signed char)bestY;
 }
 
 // 通用的檢查連綫邏輯
@@ -184,23 +187,32 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
     }
 }
 
+/* 統一的「落子判定」：對「player 在 (x,y) 落子」這個動作做完整分類。
+   checkUnValid 與 endGame 共用此函數，避免規則邏輯分散在多處而漂移。
+   回傳： 2 = 勝著（五連；白棋長連也算勝）
+          1 = 一般合法著法
+          0 = 已有棋子
+         -3/-4/-6 = 黑棋禁手（三三/四四/長連） */
+int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
+    if (board[y][x] != 0) return 0;
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+    int line[14] = {0};
+    checkLine(board, x, y, player, line);
+    if (line[5] > 0) return 2;                    // 五連即勝，優先於一切禁手
+    if (player == 2 && line[13] > 0) return 2;    // 長連只對白棋算勝
+    if (player == 1) {
+        if ((line[3] + line[9]) >= 2) return -3;
+        if ((line[4] + line[8] + line[10] + line[12]) >= 2) return -4;
+        if (line[13] >= 1) return -6;
+    }
+    return 1;
+}
+
 /* 檢查指定位置是否有棋子/落子後是否形成禁手
 返回值：返回1如果落子後形成有效連線，否則返回禁手代碼（0：已有棋子，-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
 int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
-    // 已有棋子
-    if(board[y][x] != 0) return 0;
-    if(player == 1){
-        // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-        int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0};  // 该位置落子后，自己的连线数
-
-        // 更新
-        checkLine(board, x, y, player, my_line);
-        if(my_line[5]!=0) return 1;  // 五連與禁手同時形成則不算禁手
-        if((my_line[3]+my_line[9]) >= 2) return -3;
-        else if((my_line[4]+my_line[8]+my_line[10]+my_line[12])>= 2) return -4;
-        else if(my_line[13] >= 1) return -6;
-    }
-    return 1; // 有效
+    int r = judgeMove(board, x, y, player);
+    return (r == 2) ? 1 : r;   // 對外語義不變：勝著也是「有效落子」（回傳 1）
 }
 
 // 快速評估函數
@@ -219,11 +231,11 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 100000  * my_line[4] +  // 活四
                 20000   * my_line[10]+  // 跳活四
                 10000   * my_line[8] +  // 沖四
-                7000    * my_line[12]+  // 跳活四
+                7000    * my_line[12]+  // 跳四
                 8000    * my_line[3] +  // 活三
                 4000    * my_line[9] +  // 跳活三
                 500     * my_line[7] +  // 眠三
-                700     * my_line[9] +  // 跳三
+                700     * my_line[11]+  // 跳三
                 50      * my_line[2] +  // 活二
                 10      * my_line[6];   // 眠二
 
@@ -268,7 +280,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 20000   * (my_now[4]/4) +   // 活四
                 15000   * (my_now[10]/4)+   // 跳活四
                 10000   * (my_now[8]/4) +   // 冲四
-                10000   * (my_now[10]/4)+   // 跳四
+                10000   * (my_now[12]/4)+   // 跳四
                 7000    * (my_now[3]/3) +   // 活三
                 4000    * (my_now[9]/3) +  // 跳活三
                 2000    * (my_now[11]/3) +  // 跳三
@@ -281,7 +293,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 20000   * (op_now[4]/4) +   // 活四
                 15000   * (op_now[10]/4)+   // 跳活四
                 10000   * (op_now[8]/4) +   // 冲四
-                10000   * (op_now[10]/4)+   // 跳四
+                10000   * (op_now[12]/4)+   // 跳四
                 7000    * (op_now[3]/3) +   // 活三
                 4000    * (op_now[9]/3) +  // 跳活三
                 2000    * (op_now[11]/3) +  // 跳三
@@ -367,15 +379,14 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                    // ai勝利（直接落子）/ 對手勝利（防守）
-                    board[y][x] = player;
-                    if (checkWin(board, minX, maxX, minY, maxY, player) == player) {
+                    // 實際落子的是 currentPlayer：黑棋禁手點不能下（成五回傳 2，勝著不受影響）
+                    if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;
+                    // ai勝利（直接落子）/ 對手勝利（防守）：單點判定，免落子、免全盤掃描
+                    if (judgeMove(board, x, y, player) == 2) {
                         *bestX = x;
                         *bestY = y;
-                        board[y][x] = 0;
                         return 1;  // 立即返回獲勝移動
                     }
-                    board[y][x] = 0;
                 }
             }
         }
@@ -529,8 +540,19 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         return evaluate(board, minX, maxX, minY, maxY, ai);
     }
 
+    // TT flag 判定必須對照進入節點時的原始邊界，不能用迴圈中被更新過的 alpha/beta
+    int alphaOrig = alpha, betaOrig = beta;
+
     // 在置換表中查找當前棋盤狀態
     HashEntry* entry = lookupHashEntry(currentZobristKey);
+
+    // 先複製 TT 的 bestMove 到區域變數：遞迴子搜索的 always-replace 寫入
+    // 可能覆蓋同一個 bucket，迴圈中不能再讀 entry 指標本身
+    int ttMoveX = -1, ttMoveY = -1;
+    if (entry != NULL && entry->bestX > 0) {
+        ttMoveX = entry->bestX;
+        ttMoveY = entry->bestY;
+    }
 
     // 如果在置換表中找到了當前狀態，並且存儲的深度大於等於當前深度
     if (entry != NULL && entry->depth >= depth) {
@@ -555,7 +577,24 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     Move moves[BOARD_MAX * BOARD_MAX];
     sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, currentPlayer);
     if (moveCount == 0) return isMaximizing ? INT_MIN : INT_MAX;
+
+    // PV-Move ordering：TT 的 bestMove 不受 depth 限制，在完整候選列表（截斷前）
+    // 找到後 memmove 到首位，同時把它從硬截斷中救回來
+    if (ttMoveX > 0) {
+        for (int i = 0; i < moveCount; i++) {
+            if (moves[i].x == ttMoveX && moves[i].y == ttMoveY) {
+                if (i > 0) {
+                    Move ttMove = moves[i];
+                    memmove(&moves[1], &moves[0], i * sizeof(Move));
+                    moves[0] = ttMove;
+                }
+                break;
+            }
+        }
+    }
+
     int count = moveCount > 10 ? 10 : moveCount;
+    int bestMx = moves[0].x, bestMy = moves[0].y;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
         board[y][x] = currentPlayer;
@@ -563,70 +602,82 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         // 遞迴呼叫 miniMax，切換到對手回合
         if (isMaximizing) {
             int score = miniMax(board, depth - 1, false, 3 - currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY);
-            bestScore = (score > bestScore) ? score : bestScore;
+            if (score > bestScore) { bestScore = score; bestMx = x; bestMy = y; }
             // 更新 Alpha 值
             alpha = (bestScore > alpha) ? bestScore : alpha;
         }else {
             int score = miniMax(board, depth - 1, true, 3 - currentPlayer, ai, alpha, beta, minX, maxX, minY, maxY);
-            bestScore = (score < bestScore) ? score : bestScore;
+            if (score < bestScore) { bestScore = score; bestMx = x; bestMy = y; }
             // 更新 Beta 值
             beta = (bestScore < beta) ? bestScore : beta;
         }
         // 撤銷移動
         board[y][x] = 0;
         updateZobristKey(x, y, currentPlayer); // 還原雜湊值
-        
+
         // Alpha-Beta 剪枝
         if (alpha >= beta) break;
     }
 
     // 在返回分數之前，將結果存儲到置換表中
     char flag;
-    if (bestScore <= alpha) {
-        flag = 'U';  // 上界
-    } else if (bestScore >= beta) {
-        flag = 'L';  // 下界
+    if (bestScore <= alphaOrig) {
+        flag = 'U';  // 上界 (fail-low)
+    } else if (bestScore >= betaOrig) {
+        flag = 'L';  // 下界 (fail-high)
     } else {
         flag = 'E';  // 精確值
     }
-    storeHashEntry(currentZobristKey, depth, bestScore, flag);
+    storeHashEntry(currentZobristKey, depth, bestScore, flag, bestMx, bestMy);
 
     return bestScore;
 }
 
-// 找最佳落子
+// 找最佳落子（迭代加深：從深度 1 逐層加深，每層用上一層的最佳走法改善排序）
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
     static bool ttInitialized = false;
     if (!ttInitialized) {
         initTranspositionTable();
         ttInitialized = true;
     }
-    int bestScore = INT_MIN; // 初始化最大分數
-    bool found = false; // 判斷是否找到合適位置
     int moveCount = 0;
-    int x,y;
-    
-    int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
-    if (roundCounter <=8 && depth>6) depth -=2;
+
+    int maxDepth = MAX_DEPTH + (ai == 1 ? 1 : 0);
+    if (roundCounter <=8 && maxDepth>6) maxDepth -=2;
     Move moves[BOARD_MAX * BOARD_MAX];
     sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, ai);
     int count = moveCount > 12 ? 12 : moveCount;
-    for (int i = 0; i < count; i++) {
-        x = moves[i].x, y = moves[i].y;
-        board[y][x] = ai;
-        updateZobristKey(x,y,ai);
-        int score = miniMax(board, depth-1, false, 3 - ai, ai, INT_MIN, INT_MAX, minX, maxX, minY, maxY);
-        updateZobristKey(x,y,ai);
-        board[y][x] = 0;
-        
-        //printf("%d(x:%d,y:%d)--->%d\n",score,x,y,moves[i].score);
-        if (score > bestScore) {
-            bestScore = score;
-            *bestX = x;
-            *bestY = y;
-            found = true;
+    if (count == 0) return;
+    *bestX = moves[0].x;
+    *bestY = moves[0].y;
+
+    for (int d = 1; d <= maxDepth; d++) {
+        int bestScore = INT_MIN;
+        int bestIdx = 0;
+        int alpha = INT_MIN;
+        for (int i = 0; i < count; i++) {
+            int x = moves[i].x, y = moves[i].y;
+            board[y][x] = ai;
+            updateZobristKey(x,y,ai);
+            int score = miniMax(board, d-1, false, 3 - ai, ai, alpha, INT_MAX, minX, maxX, minY, maxY);
+            updateZobristKey(x,y,ai);
+            board[y][x] = 0;
+
+            //printf("d=%d %d(x:%d,y:%d)--->%d\n",d,score,x,y,moves[i].score);
+            if (score > bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+            if (bestScore > alpha) alpha = bestScore;
         }
-        //if (bestScore > 10000000) break;
+        // 把本層最佳走法移到候選首位（其餘保持相對順序），供下一層優先搜索
+        Move best = moves[bestIdx];
+        memmove(&moves[1], &moves[0], bestIdx * sizeof(Move));
+        moves[0] = best;
+        *bestX = best.x;
+        *bestY = best.y;
+        // 已找到必勝走法，不需要再加深
+        if (bestScore >= 10000000) break;
     }
 }
 

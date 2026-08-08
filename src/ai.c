@@ -640,6 +640,8 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         initTranspositionTable();
         ttInitialized = true;
     }
+    // 每次搜索前以實際盤面重算，key 為絕對值——不依賴外部呼叫方逐手同步
+    currentZobristKey = computeZobristKey(board);
     int moveCount = 0;
 
     int maxDepth = MAX_DEPTH + (ai == 1 ? 1 : 0);

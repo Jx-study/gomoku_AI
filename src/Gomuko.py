@@ -38,8 +38,8 @@ ai_lib.checkWin.argtypes = [
     ctypes.c_int,  # maxY
     ctypes.c_int   # currentPlayer
 ]
-ai_lib.updateZobristKey.restype = None
-ai_lib.updateZobristKey.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+# 注意：Zobrist key 由 C 端 findBestMove 每次搜索前以實際盤面重算（絕對值），
+# Python 端不需要、也不應該再逐手同步（原本的同步呼叫已移除）。
 
 # 定义 ctypes 二维数组的类型
 CBoardType = (ctypes.c_int * const.BOARD_MAX) * const.BOARD_MAX
@@ -70,8 +70,6 @@ class GameHistory:
             self.piece_objects.pop()
             self.number_objects[-1].undraw()
             self.number_objects.pop()
-            
-            ai_lib.updateZobristKey(x, y, 0)         # 更新 Zobrist key
 
         return True
 
@@ -428,7 +426,6 @@ class GomokuGame:
                 number = self.window.create_number(x, y, self.roundCounter)
 
                 self.board.add_move(x, y, current_player, piece, number)
-                ai_lib.updateZobristKey(x, y, current_player)
                 self.window.update_time(end_time - start_time)
 
                 if self.check_win(current_player):

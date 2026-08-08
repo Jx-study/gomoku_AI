@@ -22,6 +22,7 @@ gcc -shared -o old.dll -fPIC old.c
 | `ab.py` | 同上，但全部在同一個 process 跑（較快，但見下方警告） |
 | `_one.py` | `ab_fresh.py` 自動產生的 worker，不要手動執行或刪除 |
 | `zob_key_probe.py` | 探測 `currentZobristKey` 是否與實際盤面相符（Zobrist 正確性） |
+| `selfplay.py` | **兩版 dll 對打統計勝率。** 驗證「棋力有無退步」的唯一手段 |
 | `benchmark_ai.py` | Task 1-3 時期的對照腳本。**獨有功能：** `evaluate()` 佔比量測（需 `ai_profiled.dll`） |
 | `ai_profiled.c` | `ai.c` 的加計數器版本，供 `benchmark_ai.py` 量測 `evaluate()` 耗時佔比 |
 
@@ -35,7 +36,20 @@ python zob_key_probe.py [<dll> ...]             # 預設檢查 ../ai.dll
 # evaluate() 佔比量測（判斷瓶頸在不在評估函數）
 gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c
 python benchmark_ai.py <baseline.dll> [<new.dll>]
+
+# 棋力對比（改動會改變走法時用這個，不是 ab_fresh.py）
+cp ../ai.dll ./new.dll                 # 兩個路徑必須是不同檔案
+python selfplay.py ./old.dll ./new.dll 20
 ```
+
+### 該用 `ab_fresh.py` 還是 `selfplay.py`？
+
+| 改動性質 | 用哪個 | 判準 |
+|---|---|---|
+| **行為保持**（重構、整數化、效能優化） | `ab_fresh.py` | 走法必須**完全相同** |
+| **刻意改變棋力**（權重、排序、搜索策略） | `selfplay.py` | 走法本來就會不同，只能看**勝率** |
+
+用錯工具會得到無意義的結論：對 A5b 這種調權重的改動跑 `ab_fresh.py`，只會看到一堆 `**DIFF**`，什麼也證明不了。
 
 ### `evaluate()` 佔比量測的用途
 

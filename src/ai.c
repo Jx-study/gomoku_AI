@@ -6,9 +6,9 @@
 #include <time.h>
 #include <stdint.h> // unsigned long long int.....
 
-#define MIDPOINT_X 11
-#define MIDPOINT_Y 11
-#define BOARD_MAX 22
+#define BOARD_MAX 15
+#define MIDPOINT_X (BOARD_MAX / 2)
+#define MIDPOINT_Y (BOARD_MAX / 2)
 #define MAX_DEPTH 7 // 定義搜索深度
 #define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
 #define TABLE_MASK (TABLE_SIZE - 1)
@@ -17,7 +17,7 @@ typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
     int depth;               // 搜索深度
     int score;               // 評估分數
-    char flag;                // 標誌（精確值、上界、下界）  
+    char flag;                // 標誌（精確值、上界、下界）
 } HashEntry;
 
 typedef struct {
@@ -96,7 +96,7 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
             int nx = x + j * dx * direction;
             int ny = y + j * dy * direction;
 
-            if (nx >= 1 && nx < (BOARD_MAX) && ny >= 1 && ny < (BOARD_MAX)) {
+            if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {
                 if (board[ny][nx] == player) {
                     (*count)++;
                     max_count++;
@@ -633,9 +633,9 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
 // 計算當前棋局的最小和最大邊界
 void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY, int *maxY) {
     *minX = BOARD_MAX;
-    *maxX = 1;
+    *maxX = 0;
     *minY = BOARD_MAX;
-    *maxY = 1;
+    *maxY = 0;
     
     for (int x = 0; x < BOARD_MAX; x++) {
         for (int y = 0; y < BOARD_MAX; y++) {
@@ -648,11 +648,11 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
         }
     }
     
-    // 扩大边界
-    *minX = (*minX - 2 >= 0) ? *minX - 2 : 1;
-    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX -1;
-    *minY = (*minY - 2 >= 0) ? *minY - 2 : 1;
-    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX -1;
+    // 擴大邊界（棋盤為 0-indexed，下限夾在 0）
+    *minX = (*minX - 2 >= 0) ? *minX - 2 : 0;
+    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX - 1;
+    *minY = (*minY - 2 >= 0) ? *minY - 2 : 0;
+    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX - 1;
 }
 
 // AI回合
@@ -667,16 +667,16 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
             y = MIDPOINT_Y;
         } 
         
-        // 第二步
-        else if(roundCounter == 3){ 
-            x = 10;
-            y = 10;
-            if(board[y][x] != 0|| board[10][10] != 0) { 
-                x = 12; 
-                y = 10;
-            }else if (board[10][11] != 0 !=0){
-                x = 10; 
-                y = 12;
+        // 第二步：優先取中心左上斜角，被佔則依序換其他斜角
+        else if(roundCounter == 3){
+            x = MIDPOINT_X - 1;
+            y = MIDPOINT_Y - 1;
+            if(board[y][x] != 0) {
+                x = MIDPOINT_X + 1;
+                y = MIDPOINT_Y - 1;
+            }else if (board[MIDPOINT_Y - 1][MIDPOINT_X] != 0){
+                x = MIDPOINT_X - 1;
+                y = MIDPOINT_Y + 1;
             }
         }
         // 第三手開始
@@ -688,11 +688,12 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
     else{
         if (roundCounter == 2){
             srand(time(NULL));  // 初始化隨機數生成器
-            x = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            y = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            while(x==y&&x ==11){
-                x = 10;
-                y = 10;
+            x = MIDPOINT_X - 1 + rand() % 3;  // 中心點 ±1 範圍內的隨機整數
+            y = MIDPOINT_Y - 1 + rand() % 3;
+            // 中心點已被黑棋第一手佔據，改下左上斜角
+            if(x == MIDPOINT_X && y == MIDPOINT_Y){
+                x = MIDPOINT_X - 1;
+                y = MIDPOINT_Y - 1;
             }
         }
         else{

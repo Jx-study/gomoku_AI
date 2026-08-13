@@ -6,17 +6,19 @@
 #include <time.h>
 #include <stdint.h> // unsigned long long int.....
 
-#define MIDPOINT_X 11
-#define MIDPOINT_Y 11
-#define BOARD_MAX 22
+// 棋盤大小的唯一定義處。Python 端透過 getBoardMax() 讀取此值
+#define BOARD_MAX 15
+#define MIDPOINT_X (BOARD_MAX / 2)
+#define MIDPOINT_Y (BOARD_MAX / 2)
 #define MAX_DEPTH 7 // 定義搜索深度
-#define TABLE_SIZE 10000003  // 选择一个合适的大小
+#define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
+#define TABLE_MASK (TABLE_SIZE - 1)
 
 typedef struct {
     unsigned long long key;  // Zobrist 哈希鍵(結點局面的 64 位校驗值)
     int depth;               // 搜索深度
     int score;               // 評估分數
-    char flag;                // 標誌（精確值、上界、下界）  
+    char flag;                // 標誌（精確值、上界、下界）
 } HashEntry;
 
 typedef struct {
@@ -26,6 +28,12 @@ typedef struct {
 HashEntry transpositionTable[TABLE_SIZE];
 unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 2 for player 1, player 2
 unsigned long long currentZobristKey = 0;
+
+// 回傳這顆 DLL 實際編譯時使用的棋盤大小
+// Python 端據此建立 ctypes 陣列與版面尺寸，確保與二進位檔一致
+int getBoardMax(void) {
+    return BOARD_MAX;
+}
 
 // 初始化 Zobrist 哈希表
 void initZobristTable() {
@@ -52,7 +60,7 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
     for (int i = 0; i < BOARD_MAX; i++) {
         for (int j = 0; j < BOARD_MAX; j++) {
             if (board[i][j] != 0) {
-                key ^= zobristTable[i][j][board[i][j]];
+                key ^= zobristTable[i][j][board[i][j] - 1];
             }
         }
     }
@@ -61,16 +69,9 @@ unsigned long long computeZobristKey(int board[BOARD_MAX][BOARD_MAX]) {
 
 // 尋找現在哈希值是否有在置換表中
 HashEntry* lookupHashEntry(unsigned long long zobristKey) {
-    int index = zobristKey % TABLE_SIZE;
-    int originalIndex = index;
-    while (transpositionTable[index].key != 0) {
-        if (transpositionTable[index].key == zobristKey) {
-            return &transpositionTable[index];
-        }
-        index = (index + 1) % TABLE_SIZE;
-        if (index == originalIndex) {
-            break;
-        }
+    int index = zobristKey & TABLE_MASK;
+    if (transpositionTable[index].key == zobristKey) {
+        return &transpositionTable[index];
     }
     return NULL;
 }
@@ -82,19 +83,12 @@ void updateZobristKey(int x, int y, int player) {
 
 // 存取哈希值進哈希表
 void storeHashEntry(unsigned long long zobristKey, int depth, int score, char flag) {
-    int index = zobristKey % TABLE_SIZE;
-    int originalIndex = index;
-    while (transpositionTable[index].key != 0 && transpositionTable[index].key != zobristKey) {
-        index = (index + 1) % TABLE_SIZE;
-        if (index == originalIndex) {
-            printf("Warning: Transposition table is full\n");
-            return;
-        }
-    }
-    transpositionTable[index].key = zobristKey;
+    int index = zobristKey & TABLE_MASK;
+    // Always-replace: 直接覆蓋，不管舊 entry 是什麼
+    transpositionTable[index].key   = zobristKey;
     transpositionTable[index].depth = depth;
     transpositionTable[index].score = score;
-    transpositionTable[index].flag = flag;
+    transpositionTable[index].flag  = flag;
 }
 
 // 通用的檢查連綫邏輯
@@ -109,7 +103,7 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
             int nx = x + j * dx * direction;
             int ny = y + j * dy * direction;
 
-            if (nx >= 1 && nx < (BOARD_MAX) && ny >= 1 && ny < (BOARD_MAX)) {
+            if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {
                 if (board[ny][nx] == player) {
                     (*count)++;
                     max_count++;
@@ -398,19 +392,14 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
 }
 
 // 啓發式函數Heuristic Function：快速評估落點后排序
-Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX, int minY, int maxY, int player) {
-    Move* moves = (Move*)malloc(BOARD_MAX * BOARD_MAX * sizeof(Move));
-    if (!moves) {
-        printf("Memory allocation failed\n");
-        return NULL;
-    }
+void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int minX, int maxX, int minY, int maxY, int player) {
     *count = 0;
 
     // 最高優先級：檢查是否有立即獲勝的棋路
     int bestX = -1, bestY = -1;
     if (endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)) {
         moves[(*count)++] = (Move){bestX, bestY, 9999999};
-        return moves;
+        return;
     }
 
     // 統計當前AI和玩家的棋形數
@@ -501,7 +490,7 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
             }
         }
     }
-    if (*count > 4) return moves;
+    if (*count > 4) return;
     // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
@@ -520,20 +509,30 @@ Move* sortMoves(int board[BOARD_MAX][BOARD_MAX], int *count, int minX, int maxX,
     // 錯誤檢查和排序
     if (*count == 0) {
         printf("Error: No valid moves found! Board position might be invalid.\n");
-        free(moves);  // 釋放內存
-        return NULL;
+        return;
     }
 
     qsort(moves, *count, sizeof(Move), Big_Small);
-    return moves;
 }
 
 // Alpha Beta --> minimax函數
 int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int currentPlayer, int ai, int alpha, int beta, int minX, int maxX, int minY, int maxY) {
     // 檢查是否達到搜索深度或遊戲結束
     int result = checkWin(board, minX, maxX, minY, maxY, currentPlayer);
-    if (depth == 0 || result != 0) {
-        // 到達葉子節點，返回評估分數
+
+    // 如果遊戲結束，添加深度獎勵（越早勝利分數越高）
+    if (result != 0) {
+        if (result == ai) {
+            // AI 勝利：基礎分 + 深度獎勵（depth 越大表示越早勝利）
+            return 10000000 + depth * 10000;
+        } else {
+            // AI 失敗：基礎懲罰 - 深度懲罰（depth 越大表示越晚失敗，懲罰較小）
+            return -10000000 - depth * 10000;
+        }
+    }
+
+    // 到達搜索深度限制，返回靜態評估分數
+    if (depth == 0) {
         return evaluate(board, minX, maxX, minY, maxY, ai);
     }
 
@@ -541,9 +540,8 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     HashEntry* entry = lookupHashEntry(currentZobristKey);
 
     // 如果在置換表中找到了當前狀態，並且存儲的深度大於等於當前深度
-    if (entry != NULL && entry->depth <= depth) {
+    if (entry != NULL && entry->depth >= depth) {
         if (entry->flag == 'E') {
-            printf("bingo\n");
             return entry->score;
         } else if (entry->flag == 'L' && entry->score > alpha) {
             // 如果是下界，更新 alpha 值
@@ -561,7 +559,9 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
     int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     int moveCount = 0;
-    Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, currentPlayer); 
+    Move moves[BOARD_MAX * BOARD_MAX];
+    sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, currentPlayer);
+    if (moveCount == 0) return isMaximizing ? INT_MIN : INT_MAX;
     int count = moveCount > 10 ? 10 : moveCount;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
@@ -587,9 +587,6 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         if (alpha >= beta) break;
     }
 
-     // 釋放動態分配的內存
-    free(moves);
-
     // 在返回分數之前，將結果存儲到置換表中
     char flag;
     if (bestScore <= alpha) {
@@ -606,7 +603,11 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
 // 找最佳落子
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
-    initTranspositionTable();
+    static bool ttInitialized = false;
+    if (!ttInitialized) {
+        initTranspositionTable();
+        ttInitialized = true;
+    }
     int bestScore = INT_MIN; // 初始化最大分數
     bool found = false; // 判斷是否找到合適位置
     int moveCount = 0;
@@ -614,7 +615,8 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     
     int depth = MAX_DEPTH + (ai == 1 ? 1 : 0);
     if (roundCounter <=8 && depth>6) depth -=2;
-    Move* moves = sortMoves(board, &moveCount, minX, maxX, minY, maxY, ai);
+    Move moves[BOARD_MAX * BOARD_MAX];
+    sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, ai);
     int count = moveCount > 12 ? 12 : moveCount;
     for (int i = 0; i < count; i++) {
         x = moves[i].x, y = moves[i].y;
@@ -633,17 +635,14 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         }
         //if (bestScore > 10000000) break;
     }
-
-    // 釋放動態分配的內存
-    free(moves);
 }
 
 // 計算當前棋局的最小和最大邊界
 void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY, int *maxY) {
     *minX = BOARD_MAX;
-    *maxX = 1;
+    *maxX = 0;
     *minY = BOARD_MAX;
-    *maxY = 1;
+    *maxY = 0;
     
     for (int x = 0; x < BOARD_MAX; x++) {
         for (int y = 0; y < BOARD_MAX; y++) {
@@ -656,11 +655,11 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
         }
     }
     
-    // 扩大边界
-    *minX = (*minX - 2 >= 0) ? *minX - 2 : 1;
-    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX -1;
-    *minY = (*minY - 2 >= 0) ? *minY - 2 : 1;
-    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX -1;
+    // 擴大邊界（棋盤為 0-indexed，下限夾在 0）
+    *minX = (*minX - 2 >= 0) ? *minX - 2 : 0;
+    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX - 1;
+    *minY = (*minY - 2 >= 0) ? *minY - 2 : 0;
+    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX - 1;
 }
 
 // AI回合
@@ -675,16 +674,16 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
             y = MIDPOINT_Y;
         } 
         
-        // 第二步
-        else if(roundCounter == 3){ 
-            x = 10;
-            y = 10;
-            if(board[y][x] != 0|| board[10][10] != 0) { 
-                x = 12; 
-                y = 10;
-            }else if (board[10][11] != 0 !=0){
-                x = 10; 
-                y = 12;
+        // 第二步：優先取中心左上斜角，被佔則依序換其他斜角
+        else if(roundCounter == 3){
+            x = MIDPOINT_X - 1;
+            y = MIDPOINT_Y - 1;
+            if(board[y][x] != 0) {
+                x = MIDPOINT_X + 1;
+                y = MIDPOINT_Y - 1;
+            }else if (board[MIDPOINT_Y - 1][MIDPOINT_X] != 0){
+                x = MIDPOINT_X - 1;
+                y = MIDPOINT_Y + 1;
             }
         }
         // 第三手開始
@@ -696,11 +695,12 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
     else{
         if (roundCounter == 2){
             srand(time(NULL));  // 初始化隨機數生成器
-            x = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            y = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            while(x==y&&x ==11){
-                x = 10;
-                y = 10;
+            x = MIDPOINT_X - 1 + rand() % 3;  // 中心點 ±1 範圍內的隨機整數
+            y = MIDPOINT_Y - 1 + rand() % 3;
+            // 中心點已被黑棋第一手佔據，改下左上斜角
+            if(x == MIDPOINT_X && y == MIDPOINT_Y){
+                x = MIDPOINT_X - 1;
+                y = MIDPOINT_Y - 1;
             }
         }
         else{

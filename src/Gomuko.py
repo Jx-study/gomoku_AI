@@ -5,12 +5,19 @@ import os, sys
 import tkinter as tk
 from tkinter import Scrollbar
 
+# 加載共享庫
+# 必須在 const 之前載入：棋盤大小由 ai.c 決定，const 需要先取得該值。
+ai_lib = ctypes.CDLL('./ai.dll')
+ai_lib.getBoardMax.restype = ctypes.c_int
+
 # 定義常量+全域變數
 class const:
     MARGIN = 100              # 棋盤邊距
     GRID = 30                 # 每個網格的大小
     PIECE_RADIUS = 10         # 棋子的半徑
-    BOARD_MAX = 15            # 棋盤邊長（格點數），座標範圍 0 ~ BOARD_MAX-1（須與 ai.c 的 BOARD_MAX 一致）
+    # 棋盤邊長（格點數），座標範圍 0 ~ BOARD_MAX-1。
+    # 唯一定義處是 ai.c；此處讀取 DLL 實際編譯值，故兩端不可能失去同步。
+    BOARD_MAX = ai_lib.getBoardMax()
     NUM = BOARD_MAX           # 繪製線條數，與格點數相同
     LEN = (NUM - 1) * GRID    # 棋盤的總長度
     MIDPOINT_X = BOARD_MAX // 2
@@ -27,9 +34,6 @@ class const:
     WIN_W = max(BOARD_END + MARGIN, 3 * BUTTON_W + 2 * BUTTON_GAP + 2 * MARGIN)
     WIN_H = BUTTON_BOTTOM + 15
     CENTER_X = WIN_W // 2             # 視窗水平中心（提示文字、對話框用）
-
-# 加載共享庫
-ai_lib = ctypes.CDLL('./ai.dll')
 
 # 定義C函數的返回值和參數類型
 ai_lib.initZobristTable.restype = None

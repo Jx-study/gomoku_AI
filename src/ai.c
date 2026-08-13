@@ -6,6 +6,7 @@
 #include <time.h>
 #include <stdint.h> // unsigned long long int.....
 
+// 棋盤大小的唯一定義處。Python 端透過 getBoardMax() 讀取此值
 #define BOARD_MAX 15
 #define MIDPOINT_X (BOARD_MAX / 2)
 #define MIDPOINT_Y (BOARD_MAX / 2)
@@ -27,6 +28,12 @@ typedef struct {
 HashEntry transpositionTable[TABLE_SIZE];
 unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 2 for player 1, player 2
 unsigned long long currentZobristKey = 0;
+
+// 回傳這顆 DLL 實際編譯時使用的棋盤大小
+// Python 端據此建立 ctypes 陣列與版面尺寸，確保與二進位檔一致
+int getBoardMax(void) {
+    return BOARD_MAX;
+}
 
 // 初始化 Zobrist 哈希表
 void initZobristTable() {

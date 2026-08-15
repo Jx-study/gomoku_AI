@@ -6,9 +6,10 @@
 #include <time.h>
 #include <stdint.h> // unsigned long long int.....
 
-#define MIDPOINT_X 11
-#define MIDPOINT_Y 11
-#define BOARD_MAX 22
+// 棋盤大小的唯一定義處。Python 端透過 getBoardMax() 讀取此值
+#define BOARD_MAX 15
+#define MIDPOINT_X (BOARD_MAX / 2)
+#define MIDPOINT_Y (BOARD_MAX / 2)
 #define MAX_DEPTH 7 // 定義搜索深度
 #define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
 #define TABLE_MASK (TABLE_SIZE - 1)
@@ -28,6 +29,12 @@ typedef struct {
 HashEntry transpositionTable[TABLE_SIZE];
 unsigned long long zobristTable[BOARD_MAX][BOARD_MAX][2];  // 2 for player 1, player 2
 unsigned long long currentZobristKey = 0;
+
+// 回傳這顆 DLL 實際編譯時使用的棋盤大小
+// Python 端據此建立 ctypes 陣列與版面尺寸，確保與二進位檔一致
+int getBoardMax(void) {
+    return BOARD_MAX;
+}
 
 // 初始化 Zobrist 哈希表
 void initZobristTable() {
@@ -99,7 +106,7 @@ void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int
             int nx = x + j * dx * direction;
             int ny = y + j * dy * direction;
 
-            if (nx >= 1 && nx < (BOARD_MAX) && ny >= 1 && ny < (BOARD_MAX)) {
+            if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {
                 if (board[ny][nx] == player) {
                     (*count)++;
                     max_count++;
@@ -690,9 +697,9 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
 // 計算當前棋局的最小和最大邊界
 void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY, int *maxY) {
     *minX = BOARD_MAX;
-    *maxX = 1;
+    *maxX = 0;
     *minY = BOARD_MAX;
-    *maxY = 1;
+    *maxY = 0;
     
     for (int x = 0; x < BOARD_MAX; x++) {
         for (int y = 0; y < BOARD_MAX; y++) {
@@ -705,11 +712,11 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
         }
     }
     
-    // 扩大边界
-    *minX = (*minX - 2 >= 0) ? *minX - 2 : 1;
-    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX -1;
-    *minY = (*minY - 2 >= 0) ? *minY - 2 : 1;
-    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX -1;
+    // 擴大邊界（棋盤為 0-indexed，下限夾在 0）
+    *minX = (*minX - 2 >= 0) ? *minX - 2 : 0;
+    *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX - 1;
+    *minY = (*minY - 2 >= 0) ? *minY - 2 : 0;
+    *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX - 1;
 }
 
 // AI回合
@@ -724,17 +731,29 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
             y = MIDPOINT_Y;
         } 
         
-        // 第二步
-        else if(roundCounter == 3){ 
-            x = 10;
-            y = 10;
-            if(board[y][x] != 0|| board[10][10] != 0) { 
-                x = 12; 
-                y = 10;
-            }else if (board[10][11] != 0 !=0){
-                x = 10; 
-                y = 12;
+        // 第二步：優先取中心左上斜角，被佔則依序換其他斜角
+        // 依序掃描四個斜角，取第一個空點。舊版用 if/else-if 串接，但
+        // else-if 的守衛檢查的是中心正上方、與該分支要下的斜角無關，
+        // 且改用右上角後從未再檢查該點是否已被佔據。
+        else if(roundCounter == 3){
+            const int diag[4][2] = {
+                {MIDPOINT_X - 1, MIDPOINT_Y - 1},
+                {MIDPOINT_X + 1, MIDPOINT_Y - 1},
+                {MIDPOINT_X - 1, MIDPOINT_Y + 1},
+                {MIDPOINT_X + 1, MIDPOINT_Y + 1}
+            };
+            x = -1;
+            y = -1;
+            for(int i = 0; i < 4; i++){
+                if(board[diag[i][1]][diag[i][0]] == 0){
+                    x = diag[i][0];
+                    y = diag[i][1];
+                    break;
+                }
             }
+            // 四個斜角都被佔（正常對局不會發生，僅在悔棋等異常狀態下可能）
+            // 時退回一般搜索，確保不會回傳已有棋子的座標。
+            if(x < 0) findBestMove(board, &x, &y, ai, minX, maxX, minY, maxY, roundCounter);
         }
         // 第三手開始
         else{
@@ -745,11 +764,22 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
     else{
         if (roundCounter == 2){
             srand(time(NULL));  // 初始化隨機數生成器
-            x = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            y = 10 + rand() % 3;  // 生成介於 10 和 12 之間的隨機整數
-            while(x==y&&x ==11){
-                x = 10;
-                y = 10;
+            x = MIDPOINT_X - 1 + rand() % 3;  // 中心點 ±1 範圍內的隨機整數
+            y = MIDPOINT_Y - 1 + rand() % 3;
+            // 隨機點已被佔據（正常對局只有黑棋第一手在中心，但悔棋等異常
+            // 狀態下可能有其他棋子），依序找 3x3 內第一個空點。
+            if(board[y][x] != 0){
+                int found = 0;
+                for(int j = MIDPOINT_Y - 1; j <= MIDPOINT_Y + 1 && !found; j++){
+                    for(int i = MIDPOINT_X - 1; i <= MIDPOINT_X + 1 && !found; i++){
+                        if(board[j][i] == 0){
+                            x = i;
+                            y = j;
+                            found = 1;
+                        }
+                    }
+                }
+                if(!found) findBestMove(board, &x, &y, ai, minX, maxX, minY, maxY, roundCounter);
             }
         }
         else{

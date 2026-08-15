@@ -5,19 +5,37 @@ import os, sys
 import tkinter as tk
 from tkinter import Scrollbar
 
-# 定義常量+全域變數
-class const:
-    MARGIN = 100      # 棋盤邊距
-    GRID = 30         # 每個網格的大小
-    NUM = 22          # 棋盤格子數量 (從0到22，總共23個點)
-    LEN = 630         # 棋盤的總長度 (NUM-1) * GRID
-    PIECE_RADIUS = 10 # 棋子的半徑
-    BOARD_MAX = 22
-    MIDPOINT_X = 11
-    MIDPOINT_Y = 11
+from game_state import GameState   # 盤面/輪次/開局規則/悔棋（有測試涵蓋）
 
 # 加載共享庫
+# 必須在 const 之前載入：棋盤大小由 ai.c 決定，const 需要先取得該值。
 ai_lib = ctypes.CDLL('./ai.dll')
+ai_lib.getBoardMax.restype = ctypes.c_int
+
+# 定義常量+全域變數
+class const:
+    MARGIN = 100              # 棋盤邊距
+    GRID = 30                 # 每個網格的大小
+    PIECE_RADIUS = 10         # 棋子的半徑
+    # 棋盤邊長（格點數），座標範圍 0 ~ BOARD_MAX-1。
+    # 唯一定義處是 ai.c；此處讀取 DLL 實際編譯值，故兩端不可能失去同步。
+    BOARD_MAX = ai_lib.getBoardMax()
+    NUM = BOARD_MAX           # 繪製線條數，與格點數相同
+    LEN = (NUM - 1) * GRID    # 棋盤的總長度
+    MIDPOINT_X = BOARD_MAX // 2
+    MIDPOINT_Y = BOARD_MAX // 2
+
+    # --- 以下版面尺寸由棋盤大小推導，改 BOARD_MAX 時自動貼合 ---
+    BOARD_END = MARGIN + LEN          # 棋盤右／下緣座標
+    BUTTON_W = 100                    # 按鈕寬
+    BUTTON_H = 40                     # 按鈕高
+    BUTTON_GAP = 40                   # 按鈕間距
+    BUTTON_TOP = BOARD_END + 15       # 按鈕頂緣（棋盤下方）
+    BUTTON_BOTTOM = BUTTON_TOP + BUTTON_H
+    # 視窗需容納棋盤與其下方的按鈕列（右側留與左側相同的邊距）
+    WIN_W = max(BOARD_END + MARGIN, 3 * BUTTON_W + 2 * BUTTON_GAP + 2 * MARGIN)
+    WIN_H = BUTTON_BOTTOM + 15
+    CENTER_X = WIN_W // 2             # 視窗水平中心（提示文字、對話框用）
 
 # 定義C函數的返回值和參數類型
 ai_lib.initZobristTable.restype = None
@@ -46,40 +64,60 @@ CBoardType = (ctypes.c_int * const.BOARD_MAX) * const.BOARD_MAX
 
 #---------------------------（游戲畫面+提示）-------------------------
 class GameHistory:
+    """棋盤狀態 + 對應的圖形物件。
+
+    盤面／輪次／悔棋這些純邏輯一律委派給 `GameState`（`game_state.py`），
+    本類別只額外管理 graphics 物件的生命週期。邏輯不要在這裡重寫一份——
+    `src/tests/` 測的是 `GameState`，兩邊各寫一份就會漂移。
+    """
+
     def __init__(self):
-        self.board = [[0 for _ in range(const.BOARD_MAX)] for _ in range(const.BOARD_MAX)]
-        self.moves_history = []     # 儲存落子記錄
+        self.state = GameState(const.BOARD_MAX)
         self.piece_objects = []     # 棋子圖形
         self.number_objects = []    # 棋子回合數提示
 
+    @property
+    def board(self):
+        return self.state.board
+
+    @property
+    def moves_history(self):
+        return self.state.moves
+
     def add_move(self, x, y, player, piece, number):
-        self.board[y][x] = player
-        self.moves_history.append((x, y, player))
+        """落子並記錄對應的圖形物件。回傳是否成功。
+
+        只有 state.play() 成功時才收下圖形物件，否則 piece/number 兩份
+        清單會比 moves 多出一筆，悔棋時就會 undraw 到錯誤的棋子。
+        """
+        if not self.state.play(x, y, player):
+            return False
         self.piece_objects.append(piece)
         self.number_objects.append(number)
+        return True
 
     def undo_last_move(self):
-        if not self.moves_history:
-            return False
-        
-        # 移除最後兩個個棋子和數字的圖形
-        for i in range (2):
-            x, y, player = self.moves_history.pop()
-            self.board[y][x] = 0
+        """悔棋，回傳實際撤銷的手數（0 表示沒有可悔的棋）。
+
+        撤銷手數與 roundCounter 的回捲量由 `GameState.undo()` 保證一致；
+        這裡只負責把對應的圖形物件移除。
+        """
+        undone = self.state.undo(2)
+
+        for _ in range(undone):
             self.piece_objects[-1].undraw()
             self.piece_objects.pop()
             self.number_objects[-1].undraw()
             self.number_objects.pop()
 
-        return True
+        return undone
 
     def clear_board(self):
-        self.board = [[0 for _ in range(const.BOARD_MAX)] for _ in range(const.BOARD_MAX)]
+        self.state.reset()
         for piece in self.piece_objects:
             piece.undraw()
         for number in self.number_objects:
             number.undraw()
-        self.moves_history.clear()
         self.piece_objects.clear()
         self.number_objects.clear()
     
@@ -132,7 +170,7 @@ class RulesWindow:
 
 class GameWindow:
     def __init__(self):
-        self.win = GraphWin(title="Gomoku", width=800, height=800)
+        self.win = GraphWin(title="Gomoku", width=const.WIN_W, height=const.WIN_H)
         self.txt_notice = None
         self.txt_round = None
         self.txt_time = None
@@ -162,9 +200,9 @@ class GameWindow:
         self.win.setBackground(color_rgb(255, 208, 118))
         
         # 文字提示
-        self.txt_notice = self.create_text(Point(400, 50), 30, (0, 0, 0), 'courier', 'bold')
-        self.txt_round = self.create_text(Point(50, 120), 18, (0, 0, 0), 'helvetica', 'normal')
-        self.txt_time = self.create_text(Point(50, 600), 12, (255, 0, 0), 'courier', 'normal')
+        self.txt_notice = self.create_text(Point(const.CENTER_X, const.MARGIN // 2), 30, (0, 0, 0), 'courier', 'bold')
+        self.txt_round = self.create_text(Point(const.MARGIN // 2, const.MARGIN + 20), 18, (0, 0, 0), 'helvetica', 'normal')
+        self.txt_time = self.create_text(Point(const.MARGIN // 2, const.BOARD_END - 30), 12, (255, 0, 0), 'courier', 'normal')
         
         # 加載圖片
         if getattr(sys, 'frozen', False):
@@ -188,16 +226,23 @@ class GameWindow:
         self.txt_time.draw(self.win)
         
         # 中心點
-        center_x = const.MARGIN + (const.NUM // 2) * const.GRID
-        center_y = const.MARGIN + (const.NUM // 2) * const.GRID
+        center_x = const.MARGIN + const.MIDPOINT_X * const.GRID
+        center_y = const.MARGIN + const.MIDPOINT_Y * const.GRID
         n_piece = Circle(Point(center_x, center_y), 7)
         n_piece.setFill('black')
         n_piece.draw(self.win)
         
-        # 創建按鈕
-        self.restart_button, _ = self.create_button(210, 745, 310, 785, "Restart", "red", "white")
-        self.undo_button, _ = self.create_button(350, 745, 450, 785, "Undo", "Orange", "white")
-        self.rules_button, _ = self.create_button(490, 745, 590, 785, "Rules", "green", "white")
+        # 創建按鈕：三顆等寬按鈕以視窗中心對齊，置於棋盤下方
+        row_w = 3 * const.BUTTON_W + 2 * const.BUTTON_GAP
+        left = const.CENTER_X - row_w // 2
+        top, bottom = const.BUTTON_TOP, const.BUTTON_BOTTOM
+        step = const.BUTTON_W + const.BUTTON_GAP
+        self.restart_button, _ = self.create_button(
+            left, top, left + const.BUTTON_W, bottom, "Restart", "red", "white")
+        self.undo_button, _ = self.create_button(
+            left + step, top, left + step + const.BUTTON_W, bottom, "Undo", "Orange", "white")
+        self.rules_button, _ = self.create_button(
+            left + 2 * step, top, left + 2 * step + const.BUTTON_W, bottom, "Rules", "green", "white")
 
     def get_click(self):
         return self.win.getMouse()
@@ -216,13 +261,13 @@ class GameWindow:
         return None
 
     def create_piece(self, x, y, is_black):
-        piece = Circle(Point(100+x*30, 100+y*30), 15)
+        piece = Circle(Point(const.MARGIN + x * const.GRID, const.MARGIN + y * const.GRID), const.GRID // 2)
         piece.setFill('black' if is_black else 'white')
         piece.draw(self.win)
         return piece
 
     def create_number(self, x, y, number):
-        txt_num = Text(Point(100+x*30, 100+y*30), str(number))
+        txt_num = Text(Point(const.MARGIN + x * const.GRID, const.MARGIN + y * const.GRID), str(number))
         txt_num.setTextColor("red")
         txt_num.draw(self.win)
         return txt_num
@@ -245,11 +290,17 @@ class GomokuGame:
     def __init__(self):
         self.window = GameWindow()
         self.board = GameHistory()
-        self.roundCounter = 1
+        # 接上禁手判斷：GameState 先過濾範圍/空位/開局規則，再問 C 端禁手。
+        self.board.state.set_forbidden_checker(self._is_not_forbidden)
 
         # 初始化 AI
         ai_lib.initZobristTable()
         ai_lib.initTranspositionTable()
+
+    # 手數只有一份真實來源（GameState），避免與盤面脫鉤。
+    @property
+    def roundCounter(self):
+        return self.board.state.round_counter
 
     def start(self):
         self.window.init_window()
@@ -259,37 +310,37 @@ class GomokuGame:
 
     # 重置遊戲狀態，保留現有物件，不重新初始化。
     def reset_game_state(self):
-        self.board.clear_board()
-        self.roundCounter = 1
-        ai_lib.initZobristTable()  
-        ai_lib.initTranspositionTable()  
+        self.board.clear_board()      # 一併把 round_counter 歸 1
+        ai_lib.initZobristTable()
+        ai_lib.initTranspositionTable()
         self.window.update_notice("重新開始遊戲")
 
     # 在現有的視窗上顯示讓玩家選擇先手或後手的畫面
     def choose_player(self):
-        # 背景
-        background = Rectangle(Point(250, 250), Point(550, 450))
+        # 對話框以視窗中心對齊
+        cx, cy = const.CENTER_X, const.WIN_H // 2
+        background = Rectangle(Point(cx - 150, cy - 100), Point(cx + 150, cy + 100))
         background.setFill(color_rgb(255, 255, 255))
         background.draw(self.window.win)
 
         # 在視窗中央顯示提示文字
-        message = Text(Point(400, 300), "Choose your role:")
+        message = Text(Point(cx, cy - 50), "Choose your role:")
         message.setTextColor(color_rgb(0, 0, 0))
         message.draw(self.window.win)
 
         # 建立選擇按鈕
-        black_button = Rectangle(Point(300, 350), Point(400, 400))
+        black_button = Rectangle(Point(cx - 100, cy), Point(cx, cy + 50))
         black_button.setFill(color_rgb(0, 0, 0))
         black_button.setOutline(color_rgb(255, 255, 255))
-        black_text = Text(Point(350, 375), "Black")
+        black_text = Text(Point(cx - 50, cy + 25), "Black")
         black_text.setTextColor(color_rgb(255, 255, 255))
         black_button.draw(self.window.win)
         black_text.draw(self.window.win)
 
-        white_button = Rectangle(Point(400, 350), Point(500, 400))
+        white_button = Rectangle(Point(cx, cy), Point(cx + 100, cy + 50))
         white_button.setFill(color_rgb(255, 255, 255))
         white_button.setOutline(color_rgb(0, 0, 0))
-        white_text = Text(Point(450, 375), "White")
+        white_text = Text(Point(cx + 50, cy + 25), "White")
         white_text.setTextColor(color_rgb(0, 0, 0))
         white_button.draw(self.window.win)
         white_text.draw(self.window.win)
@@ -325,18 +376,18 @@ class GomokuGame:
                 c_board[i][j] = board_state[i][j]
         return c_board
 
+    # 禁手判斷（交給 C 端）。範圍/空位/開局規則由 GameState 先行過濾，
+    # 所以進到這裡的座標保證在盤內，不會讓 C 端越界讀取。
+    def _is_not_forbidden(self, board, x, y, player):
+        c_board = self.convert_to_c_board()
+        return ai_lib.checkUnValid(ctypes.byref(c_board), x, y, player) == 1
+
     # 檢查指定位置落子後是否形成無效連線（禁手）OR 開局規則下法
     def check_valid_move(self, x, y, player):
-        if self.roundCounter == 1 and (x != const.MIDPOINT_X or y != const.MIDPOINT_Y):
-            return False
-        # (0 <= x,y <= 12)
-        elif self.roundCounter == 2 and (x < const.MIDPOINT_X - 1 or x > const.MIDPOINT_X + 1 or y < const.MIDPOINT_Y - 1 or y > const.MIDPOINT_Y + 1):
-            return False
-        # (9 <= x,y <= 13)
-        elif self.roundCounter == 3 and (x < const.MIDPOINT_X - 2 or x > const.MIDPOINT_X + 2 or y < const.MIDPOINT_Y - 2 or y > const.MIDPOINT_Y + 2):
-            return False
-        c_board = self.convert_to_c_board()
-        return (ai_lib.checkUnValid(ctypes.byref(c_board), x, y, player) == 1 and 0 <= x < 22 and 0 <= y < 22)
+        # 規則本體在 GameState（有測試涵蓋），這裡只負責接上禁手檢查。
+        # 檢查順序：範圍 → 空位 → 開局規則 → 禁手；範圍必須最先，否則
+        # 越界座標會先被送進 C 端存取 board[y][x]（UB）。
+        return self.board.state.is_valid_move(x, y, player)
 
     # 檢查是否有人勝利
     def check_win(self, player):
@@ -368,9 +419,9 @@ class GomokuGame:
             player, ai = self.choose_player()  # 重新選擇玩家角色
             return self.game(player, ai)  # 重新開始遊戲
         elif clicked_button == "undo":
+            # roundCounter 由 GameState.undo() 依實際撤銷手數回捲，這裡不需
+            # （也不能）自行調整，否則會與盤面脫鉤、使開局規則失效。
             if self.board.undo_last_move():
-                if self.roundCounter > 2:
-                    self.roundCounter -= 2
                 return True  # 成功悔棋，返回遊戲
             else:
                 self.window.update_notice("沒有可以悔棋的步數")
@@ -381,13 +432,18 @@ class GomokuGame:
             return False  # 點擊其他地方，退出
 
     def game(self, player, ai):
-        current_player = 1  # 1=黑棋回合，2=白棋回合
-        chance = 3
+        chance = 3          # 玩家的開局規則/禁手犯規機會
+        ai_retry = 3        # AI 回傳非法走法的容忍次數（與玩家的 chance 分開計算）
 
         self.window.update_notice("Start gomoku game ^_^")
         time.sleep(1)
 
         while True:
+            # 輪到誰下由 roundCounter 推導，不另外用變數追蹤：黑棋固定在奇數手、
+            # 白棋在偶數手。悔棋是在 operation_button() 內部改動 roundCounter 的，
+            # 那裡碰不到這個迴圈的區域變數；若另存一份 current_player，撤銷奇數
+            # 手後兩者奇偶就會對不上，變成白棋先手。
+            current_player = 1 if self.roundCounter % 2 == 1 else 2
             self.window.update_round(self.roundCounter)
 
             # AI回合
@@ -403,23 +459,32 @@ class GomokuGame:
                 else:
                     self.window.update_notice("玩家正在下棋...")
                 
+                # 按鈕（尤其是悔棋）會改變 roundCounter，而輪到誰下是在外層
+                # 迴圈開頭依 roundCounter 推導的。因此按下按鈕後必須跳回外層
+                # 重新推導，不能只重啟這個內層點擊迴圈——否則悔棋換手後
+                # current_player 仍是舊值，玩家會連下兩顆同色棋子。
+                restart_turn = False
                 while True:
                     start_time = time.time()
                     point = self.window.get_click()
                     end_time = time.time()
                     # 檢查是否點擊了按鈕
                     if self.operation_button(point, player, ai):
-                        continue
+                        restart_turn = True
+                        break
 
                     x = round((point.getX() - const.MARGIN) / const.GRID)
                     y = round((point.getY() - const.MARGIN) / const.GRID)
                     print(f"Player Move: ({x}, {y})")
                     # 如果x, y超出棋盤範圍，提示並重新點擊
-                    if 0 <= x <= 21 and 0 <= y <= 21:
+                    if 0 <= x < const.BOARD_MAX and 0 <= y < const.BOARD_MAX:
                         break
                     else:
                         self.window.update_notice("請點擊棋盤內有效位置")
-                
+
+                if restart_turn:
+                    continue
+
             # 檢查落子是否合法
             if self.check_valid_move(x, y, current_player):
                 piece = self.window.create_piece(x, y, current_player == 1)
@@ -442,16 +507,25 @@ class GomokuGame:
                             break
                         else:
                             break
-                    if(end_undo): 
-                        self.roundCounter += 1
-                        current_player = 3 - current_player
+                    if(end_undo):
+                        # operation_button() 內的悔棋已經把 roundCounter 回捲到
+                        # 正確的值，這裡不可再自行調整，否則又會與盤面脫鉤。
                         continue
                     else:
                         break # 關閉
 
-                self.roundCounter += 1
-                current_player = 3 - current_player
+                # roundCounter 已由 GameHistory.add_move() -> GameState.play() 推進
                 time.sleep(0.5)
+            elif current_player == ai:
+                # AI 回傳了非法座標。這不是玩家犯規，不能扣玩家的機會，
+                # 否則會出現「AI 自己犯規卻宣告 AI 勝利」。修好 aiRound 的
+                # 開局分支後這條路徑理論上不該再發生，保留作為診斷用的防線。
+                ai_retry -= 1
+                print(f"[BUG] AI returned invalid move ({x}, {y}) at round {self.roundCounter}")
+                if ai_retry == 0:
+                    self.window.update_notice("AI 無法產生合法走法，遊戲中止")
+                    break
+                continue
             else:
                 chance -= 1
                 if chance == 0:

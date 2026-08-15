@@ -11,6 +11,20 @@
 #define MIDPOINT_X (BOARD_MAX / 2)
 #define MIDPOINT_Y (BOARD_MAX / 2)
 #define MAX_DEPTH 7 // 定義搜索深度
+/* 強制著法門檻：分數不低於此值的候選不受 top-N 截斷。
+   實際保留的是哪些著法（照 quickEvaluate 現行權重逐條算，不是「成四等級」這麼乾淨）：
+     自己冲四        10000            → 保留（目標）
+     擋對手冲四      10000*4/5 = 8000 → 保留（目標）
+     自己活三        8000             → 保留（**順帶**：活三權重未縮放，正好等於門檻）
+     擋對手活三      8000*4/5 = 6400  → 不保留
+   這是代理指標不是精確判定：
+   quickEvaluate 把攻防相加，所以「既擋半個威脅又順帶自己活二」的普通點也可能湊到門檻以上。
+   它只保證不再漏掉強制手（寧可多留），代價是候選變多。
+   實測：9.32% 的節點觸發、平均多留 2.85 個、單節點上限 21（基準 10），時間在雜訊內。
+   門檻與權重表強耦合（統一權重表）完成後必須回頭重算上面這張表。
+   更穩健的做法是在 sortMoves 用 checkLine 結果標記 forcing 旗標，
+   不靠分數猜（見計畫 Task 2 審核補充）。 */
+#define FORCING_SCORE 8000
 #define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
 #define TABLE_MASK (TABLE_SIZE - 1)
 
@@ -523,7 +537,18 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
             }
         }
     }
-    if (*count > 4) return;
+    /* 已知限制（A6 的截斷保險救不了這裡）：
+       策略走法超過 4 個時直接跳過通用評估，此時候選列表根本沒生成一般著法。
+       miniMax/findBestMove 的門檻延伸只能把**已生成**的強制手從截斷中救回來，
+       救不了沒被生成的走法。這是獨立的生成問題，另開項目處理。 */
+    if (*count > 4) {
+        /* 這條出口也必須排序。
+           呼叫端（miniMax/findBestMove）的截斷延伸靠「降冪」才能在第一個低於門檻的
+           位置停下來；少了這個 qsort，策略走法會按掃描順序交出去，而且多個策略
+           各自的哨兵分數（99999→100000→88888→66666）本身就不是遞減的。 */
+        qsort(moves, *count, sizeof(Move), Big_Small);
+        return;
+    }
     // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
@@ -623,7 +648,11 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         }
     }
 
+    // 截斷保險：候選是降冪排序的，所以「保留所有 >= 門檻的著法」等於把截斷點
+    // 往後延到第一個低於門檻的位置。必須放在 PV-Move 搬移之後——moves[0] 被換成
+    // TT move 後分數不再有序，但 moves[1..] 仍是降冪，而 count >= 1
     int count = moveCount > 10 ? 10 : moveCount;
+    while (count < moveCount && moves[count].score >= FORCING_SCORE) count++;
     int bestMx = moves[0].x, bestMy = moves[0].y;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
@@ -678,7 +707,9 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     if (roundCounter <=8 && maxDepth>6) maxDepth -=2;
     Move moves[BOARD_MAX * BOARD_MAX];
     sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, ai);
+    // 截斷保險：同 miniMax，強制著法（成四/擋四等級）不受 top-N 截斷
     int count = moveCount > 12 ? 12 : moveCount;
+    while (count < moveCount && moves[count].score >= FORCING_SCORE) count++;
     if (count == 0) return;
     *bestX = moves[0].x;
     *bestY = moves[0].y;

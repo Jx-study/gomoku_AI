@@ -675,16 +675,28 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
         } 
         
         // 第二步：優先取中心左上斜角，被佔則依序換其他斜角
+        // 依序掃描四個斜角，取第一個空點。舊版用 if/else-if 串接，但
+        // else-if 的守衛檢查的是中心正上方、與該分支要下的斜角無關，
+        // 且改用右上角後從未再檢查該點是否已被佔據。
         else if(roundCounter == 3){
-            x = MIDPOINT_X - 1;
-            y = MIDPOINT_Y - 1;
-            if(board[y][x] != 0) {
-                x = MIDPOINT_X + 1;
-                y = MIDPOINT_Y - 1;
-            }else if (board[MIDPOINT_Y - 1][MIDPOINT_X] != 0){
-                x = MIDPOINT_X - 1;
-                y = MIDPOINT_Y + 1;
+            const int diag[4][2] = {
+                {MIDPOINT_X - 1, MIDPOINT_Y - 1},
+                {MIDPOINT_X + 1, MIDPOINT_Y - 1},
+                {MIDPOINT_X - 1, MIDPOINT_Y + 1},
+                {MIDPOINT_X + 1, MIDPOINT_Y + 1}
+            };
+            x = -1;
+            y = -1;
+            for(int i = 0; i < 4; i++){
+                if(board[diag[i][1]][diag[i][0]] == 0){
+                    x = diag[i][0];
+                    y = diag[i][1];
+                    break;
+                }
             }
+            // 四個斜角都被佔（正常對局不會發生，僅在悔棋等異常狀態下可能）
+            // 時退回一般搜索，確保不會回傳已有棋子的座標。
+            if(x < 0) findBestMove(board, &x, &y, ai, minX, maxX, minY, maxY, roundCounter);
         }
         // 第三手開始
         else{
@@ -697,10 +709,20 @@ void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* best
             srand(time(NULL));  // 初始化隨機數生成器
             x = MIDPOINT_X - 1 + rand() % 3;  // 中心點 ±1 範圍內的隨機整數
             y = MIDPOINT_Y - 1 + rand() % 3;
-            // 中心點已被黑棋第一手佔據，改下左上斜角
-            if(x == MIDPOINT_X && y == MIDPOINT_Y){
-                x = MIDPOINT_X - 1;
-                y = MIDPOINT_Y - 1;
+            // 隨機點已被佔據（正常對局只有黑棋第一手在中心，但悔棋等異常
+            // 狀態下可能有其他棋子），依序找 3x3 內第一個空點。
+            if(board[y][x] != 0){
+                int found = 0;
+                for(int j = MIDPOINT_Y - 1; j <= MIDPOINT_Y + 1 && !found; j++){
+                    for(int i = MIDPOINT_X - 1; i <= MIDPOINT_X + 1 && !found; i++){
+                        if(board[j][i] == 0){
+                            x = i;
+                            y = j;
+                            found = 1;
+                        }
+                    }
+                }
+                if(!found) findBestMove(board, &x, &y, ai, minX, maxX, minY, maxY, roundCounter);
             }
         }
         else{

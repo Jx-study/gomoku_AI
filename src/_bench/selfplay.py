@@ -18,31 +18,58 @@ import ctypes
 import os
 import sys
 
-BOARD_MAX = 22
-CBoard = (ctypes.c_int * BOARD_MAX) * BOARD_MAX
 MAX_ROUNDS = 250
 
-# 符合開局規則的腳本化開局（黑1中心、白2在3x3內、黑3在5x5內）。
-# 引擎本身幾乎是確定性的（白棋第2手的 srand(time(NULL)) 以秒為單位，
-# 快速連開多局會拿到同一手），所以開局多樣性必須由 harness 提供。
-OPENINGS = [
-    [(11, 11, 1), (10, 10, 2), (13, 13, 1)],
-    [(11, 11, 1), (10, 10, 2), (9, 9, 1)],
-    [(11, 11, 1), (12, 10, 2), (9, 13, 1)],
-    [(11, 11, 1), (11, 10, 2), (13, 11, 1)],
-    [(11, 11, 1), (10, 11, 2), (11, 13, 1)],
-    [(11, 11, 1), (12, 12, 2), (9, 11, 1)],
-    [(11, 11, 1), (10, 12, 2), (13, 9, 1)],
-    [(11, 11, 1), (12, 11, 2), (11, 9, 1)],
-    [(11, 11, 1), (11, 12, 2), (9, 10, 1)],
-    [(11, 11, 1), (12, 12, 2), (13, 12, 1)],
+# 棋盤大小由 dll 的 getBoardMax() 決定（ai.c 是唯一定義處），首次 load() 時填入
+BOARD_MAX = None
+CBoard = None
+
+# 符合開局規則的腳本化開局（黑1中心、白2在3x3內、黑3在5x5內），以中心點的偏移表示。
+#
+# 為什麼開局池要夠大：引擎是**確定性**的（Zobrist 種子固定、每局開始清空置換表，
+# 白棋第2手的 srand(time(NULL)) 分支又被腳本化開局繞過），所以同一個開局永遠打出
+# 同一盤棋。games 開超過 2 × 開局數只是把同樣的對局重播一次，勝率不會變得更可信——
+# 要提高統計解析度只能加開局，不能加局數。
+#
+# 這裡涵蓋白棋第2手的全部 8 種可能，每種配 3 個不同的黑3，共 24 個開局（= 48 局滿配對）。
+OPENING_OFFSETS = [
+    [(0, 0, 1), (w, h, 2), (bx, by, 1)]
+    for (w, h), thirds in [
+        ((-1, -1), [(+2, +2), (-2, -2), (+2, -2)]),
+        ((0, -1), [(+2, 0), (-2, +1), (+1, +2)]),
+        ((+1, -1), [(-2, +2), (+2, +2), (-1, +2)]),
+        ((-1, 0), [(0, +2), (+2, -1), (-2, +2)]),
+        ((+1, 0), [(0, -2), (-2, 0), (+2, +2)]),
+        ((-1, +1), [(+2, -2), (-2, -2), (+1, -2)]),
+        ((0, +1), [(-2, -1), (+2, +1), (0, -2)]),
+        ((+1, +1), [(-2, 0), (+2, -1), (-1, -2)]),
+    ]
+    for (bx, by) in thirds
 ]
 
 
+def openings():
+    c = BOARD_MAX // 2
+    return [[(c + dx, c + dy, p) for dx, dy, p in o] for o in OPENING_OFFSETS]
+
+
 def load(path):
+    global BOARD_MAX, CBoard
     if not os.path.exists(path):
         sys.exit(f"error: dll not found: {path}")
     lib = ctypes.CDLL(path)
+    try:
+        lib.getBoardMax.restype = ctypes.c_int
+        size = lib.getBoardMax()
+    except AttributeError:
+        sys.exit(f"error: {path} 沒有 export getBoardMax()，無法得知它編譯時用的棋盤大小。\n"
+                 f"       不確定兩顆 dll 在同樣大小的棋盤上比較時，數據沒有意義。\n"
+                 f"       請改用有 getBoardMax() 的版本當基準。")
+    if BOARD_MAX is None:
+        BOARD_MAX = size
+        CBoard = (ctypes.c_int * BOARD_MAX) * BOARD_MAX
+    elif size != BOARD_MAX:
+        sys.exit(f"error: 兩顆 dll 的棋盤大小不同（{BOARD_MAX} vs {size}），無法對比")
     lib.initZobristTable.restype = None
     lib.initTranspositionTable.restype = None
     lib.aiRound.restype = None
@@ -58,7 +85,7 @@ def line_len(board, x, y, dx, dy, p):
         i = 1
         while True:
             nx, ny = x + dx * i * s, y + dy * i * s
-            if not (1 <= nx <= 21 and 1 <= ny <= 21) or board[ny][nx] != p:
+            if not (0 <= nx < BOARD_MAX and 0 <= ny < BOARD_MAX) or board[ny][nx] != p:
                 break
             n += 1
             i += 1
@@ -105,7 +132,7 @@ def play_game(black, white, opening, verbose=True):
         engines[p].aiRound(ctypes.byref(cb), p, rc, ctypes.byref(bx), ctypes.byref(by))
         x, y = bx.value, by.value
 
-        if not (1 <= x <= 21 and 1 <= y <= 21) or board[y][x] != 0:
+        if not (0 <= x < BOARD_MAX and 0 <= y < BOARD_MAX) or board[y][x] != 0:
             if verbose:
                 print(f"    ILLEGAL move ({x},{y}) by player {p} at round {rc}")
             return 3 - p, moves, 'illegal'
@@ -142,10 +169,11 @@ def main():
     score = {a_path: 0.0, b_path: 0.0}
     reasons = {}
     records = []
+    all_openings = openings()
 
     # 配對開局：同一個開局打兩局、雙方各執一次黑，成績成對相消開局本身的偏差。
     for g in range(games):
-        opening = OPENINGS[(g // 2) % len(OPENINGS)]
+        opening = all_openings[(g // 2) % len(all_openings)]
         a_is_black = (g % 2 == 0)
         black_path, white_path = (a_path, b_path) if a_is_black else (b_path, a_path)
         black, white = (A, B) if a_is_black else (B, A)
@@ -170,6 +198,9 @@ def main():
     for p, s in score.items():
         print(f"  {os.path.basename(p):24} {s:5.1f}  ({s/games*100:.1f}%)")
     print(f"  endings: {reasons}")
+    if games > 2 * len(all_openings):
+        print(f"  WARNING: 開局池只有 {len(all_openings)} 個，超過 {2 * len(all_openings)} 局之後"
+              f"只是重播同樣的對局（引擎是確定性的），勝率不會更可信")
     if reasons.get('illegal'):
         print("  WARNING: illegal moves occurred -- engine or harness bug, results unreliable")
     if reasons.get('foul'):

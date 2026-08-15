@@ -1,9 +1,12 @@
 # `_bench/` — AI 引擎效能與正確性驗證工具
 
 這裡的腳本用來比對**兩個版本的 `ai.dll`**：確認一項改動有沒有加速、以及**走法有沒有改變**。
-沒有自動化測試框架，這是目前驗證引擎改動的主要手段。
+規則與狀態層的自動化測試在 `src/tests/`（pytest）；這裡處理的是那些測不到的東西——速度、棋力。
 
 `*.dll` 被 `.gitignore` 排除，所以本目錄只有原始碼與腳本；要跑之前得先自己編譯出對照用的 dll。
+
+棋盤大小一律向 dll 問（`getBoardMax()`），盤面座標都以中心點的偏移寫死，所以改 `ai.c` 的
+`BOARD_MAX` 之後這些腳本不需要跟著改。兩顆 dll 的棋盤大小不同時會直接報錯而不是給出錯誤數據。
 
 ## 取出歷史版本來對照
 
@@ -21,19 +24,28 @@ gcc -shared -o old.dll -fPIC old.c
 | `ab_fresh.py` | **建議優先用這個。** 每個盤面各開一個全新 process 比對兩版 dll |
 | `ab.py` | 同上，但全部在同一個 process 跑（較快，但見下方警告） |
 | `_one.py` | `ab_fresh.py` 自動產生的 worker，不要手動執行或刪除 |
-| `zob_key_probe.py` | 探測 `currentZobristKey` 是否與實際盤面相符（Zobrist 正確性） |
 | `selfplay.py` | **兩版 dll 對打統計勝率。** 驗證「棋力有無退步」的唯一手段 |
 | `benchmark_ai.py` | Task 1-3 時期的對照腳本。**獨有功能：** `evaluate()` 佔比量測（需 `ai_profiled.dll`） |
-| `ai_profiled.c` | `ai.c` 的加計數器版本，供 `benchmark_ai.py` 量測 `evaluate()` 耗時佔比 |
+| `ai_profiled.c` | `ai.c` 的加計數器版本，供 `benchmark_ai.py` 量測 `evaluate()` 耗時佔比。**已過期**（見下） |
+
+Zobrist 的正確性改由 pytest 涵蓋：`src/tests/test_zobrist.py`（key 的位元熵、逐手 XOR 與整盤
+重算是否一致、不同手順走到同一盤面是否得到同一把 key）。原本的 `zob_key_probe.py` 探測的是
+Python 端逐手同步 `updateZobristKey` 的情境，該同步已經移除，腳本連同其前提一併刪掉。
+
+⚠️ `ai_profiled.c` 是 `ai.c` 在 Task 1 之前的複本（`BOARD_MAX 22`、沒有 `judgeMove`、沒有迭代
+加深），量出來的佔比已經不代表現在的引擎。要再用 `evaluate()` 佔比量測，得先拿現在的 `ai.c`
+重新加一次計數器。這種「複製整份 ai.c 再改」的做法本身就是維護陷阱，重做時值得換個方式。
 
 ### 用法
 
 ```bash
 python ab_fresh.py <baseline.dll> [<new.dll>]   # new 預設 ../ai.dll
 python ab.py       <baseline.dll> [<new.dll>]
-python zob_key_probe.py [<dll> ...]             # 預設檢查 ../ai.dll
 
-# evaluate() 佔比量測（判斷瓶頸在不在評估函數）
+# Zobrist 正確性（不需要編對照組）
+pytest src/tests/test_zobrist.py
+
+# evaluate() 佔比量測（判斷瓶頸在不在評估函數；ai_profiled.c 需先更新，見上）
 gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c
 python benchmark_ai.py <baseline.dll> [<new.dll>]
 

@@ -14,8 +14,36 @@ import ctypes
 import time
 import sys
 
-BOARD_MAX = 22
-CBoardType = (ctypes.c_int * BOARD_MAX) * BOARD_MAX
+# 棋盤大小由 dll 的 getBoardMax() 決定（ai.c 是唯一定義處），首次 bind_lib() 時填入
+BOARD_MAX = None
+CBoardType = None
+
+
+def bind_lib(dll_path):
+    """載入 dll、以它的 getBoardMax() 決定棋盤大小、綁好 ctypes 簽名。"""
+    global BOARD_MAX, CBoardType
+    lib = ctypes.CDLL(dll_path)
+    try:
+        lib.getBoardMax.restype = ctypes.c_int
+        size = lib.getBoardMax()
+    except AttributeError:
+        sys.exit(f"error: {dll_path} 沒有 export getBoardMax()，無法得知它編譯時用的棋盤大小。\n"
+                 f"       不確定兩顆 dll 在同樣大小的棋盤上比較時，數據沒有意義。\n"
+                 f"       請改用有 getBoardMax() 的版本當基準。")
+    if BOARD_MAX is None:
+        BOARD_MAX = size
+        CBoardType = (ctypes.c_int * BOARD_MAX) * BOARD_MAX
+    elif size != BOARD_MAX:
+        sys.exit(f"error: 兩顆 dll 的棋盤大小不同（{BOARD_MAX} vs {size}），無法對比")
+    lib.initZobristTable.restype = None
+    lib.aiRound.restype = None
+    lib.aiRound.argtypes = [
+        ctypes.POINTER(CBoardType),
+        ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+    ]
+    lib.initZobristTable()
+    return lib
 
 
 def make_board():
@@ -37,42 +65,43 @@ def play(moves):
     return board
 
 
-# 基礎中局走法序列
-BASE_MOVES = [
-    (11, 11, 1), (11, 12, 2), (12, 12, 1), (10, 10, 2),
-    (13, 13, 1), (10, 12, 2), (9, 9, 1), (12, 10, 2),
-    (14, 14, 1), (9, 13, 2), (12, 13, 1), (11, 13, 2),
-    (13, 11, 1), (14, 10, 2),
+# 基礎中局走法序列，以中心點的偏移表示（換棋盤大小不必重寫座標）
+BASE_OFFSETS = [
+    (0, 0, 1), (0, 1, 2), (1, 1, 1), (-1, -1, 2),
+    (2, 2, 1), (-1, 1, 2), (-2, -2, 1), (1, -1, 2),
+    (3, 3, 1), (-2, 2, 2), (1, 2, 1), (0, 2, 2),
+    (2, 0, 1), (3, -1, 2),
 ]
 
-EXTRA_MOVES = [
-    (15, 9, 1), (8, 14, 2), (10, 9, 1), (13, 9, 2),
-    (16, 8, 1), (7, 15, 2), (11, 9, 1), (12, 9, 2),
-    (9, 11, 1), (15, 13, 2), (8, 8, 1), (16, 16, 2),
+EXTRA_OFFSETS = [
+    (4, -2, 1), (-3, 3, 2), (-1, -2, 1), (2, -2, 2),
+    (5, -3, 1), (-4, 4, 2), (0, -2, 1), (1, -2, 2),
+    (-2, 0, 1), (4, 2, 2), (-3, -3, 1), (5, 5, 2),
 ]
 
-# 5 個「不同」盤面（同一開局，逐步加深），避免同盤面重複呼叫造成置換表
-# 命中而失真——每個都只測一次（冷快取），比較接近真實對局中每手都不同盤面的情況。
-DISTINCT_SCENARIOS = []
-for i in range(0, len(EXTRA_MOVES) + 1, 4):
-    moves = BASE_MOVES + EXTRA_MOVES[:i]
-    DISTINCT_SCENARIOS.append((f"{len(moves)} stones", moves))
+
+def scenarios():
+    """5 個「不同」盤面（同一開局，逐步加深），避免同盤面重複呼叫造成置換表
+    命中而失真——每個都只測一次（冷快取），比較接近真實對局中每手都不同盤面的情況。
+
+    需要先呼叫過 bind_lib()，否則不知道棋盤中心在哪。
+    """
+    c = BOARD_MAX // 2
+    base = [(c + dx, c + dy, p) for dx, dy, p in BASE_OFFSETS]
+    extra = [(c + dx, c + dy, p) for dx, dy, p in EXTRA_OFFSETS]
+    out = []
+    for i in range(0, len(extra) + 1, 4):
+        moves = base + extra[:i]
+        out.append((f"{len(moves)} stones", moves))
+    return out
 
 
 def bench_dll(dll_path, label):
-    lib = ctypes.CDLL(dll_path)
-    lib.initZobristTable.restype = None
-    lib.aiRound.restype = None
-    lib.aiRound.argtypes = [
-        ctypes.POINTER(ctypes.c_int * BOARD_MAX * BOARD_MAX),
-        ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-    ]
-    lib.initZobristTable()
+    lib = bind_lib(dll_path)
 
     print(f"\n=== {label} ({dll_path}) ===")
     results = []
-    for name, moves in DISTINCT_SCENARIOS:
+    for name, moves in scenarios():
         board = play(moves)
         c_board = to_c_board(board)
         bestx = ctypes.c_int()
@@ -96,17 +125,9 @@ def bench_dll(dll_path, label):
 def bench_repeated_position(dll_path, label, repeats=3):
     """展示 Task 2（跨回合保留置換表）在『同一盤面重複被查詢』時的加速效果。
     注意：真實對局不會發生同盤面重複呼叫，這裡純粹是為了展示 TT 重用的效果。"""
-    lib = ctypes.CDLL(dll_path)
-    lib.initZobristTable.restype = None
-    lib.aiRound.restype = None
-    lib.aiRound.argtypes = [
-        ctypes.POINTER(ctypes.c_int * BOARD_MAX * BOARD_MAX),
-        ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-    ]
-    lib.initZobristTable()
+    lib = bind_lib(dll_path)
 
-    name, moves = DISTINCT_SCENARIOS[-1]
+    name, moves = scenarios()[-1]
     board = play(moves)
     print(f"\n=== {label}: repeated identical position ({name}) ===")
     for r in range(repeats):
@@ -123,20 +144,12 @@ def bench_repeated_position(dll_path, label, repeats=3):
 def profile_evaluate_share(dll_path="./ai_profiled.dll"):
     """方案 B：量測 evaluate() 是否仍是瓶頸（需要 ai_profiled.dll，見 ai_profiled.c）。
     回報 evaluate() 佔 aiRound() 總耗時的比例，以及 evaluate 呼叫次數 / miniMax 節點數的比例。"""
-    lib = ctypes.CDLL(dll_path)
-    lib.initZobristTable.restype = None
-    lib.aiRound.restype = None
-    lib.aiRound.argtypes = [
-        ctypes.POINTER(ctypes.c_int * BOARD_MAX * BOARD_MAX),
-        ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
-    ]
+    lib = bind_lib(dll_path)
     lib.resetProfileCounters.restype = None
     lib.getEvaluateSeconds.restype = ctypes.c_double
-    lib.initZobristTable()
 
     print(f"\n=== 方案 B: evaluate() 佔比量測 ({dll_path}) ===")
-    for name, moves in DISTINCT_SCENARIOS:
+    for name, moves in scenarios():
         lib.resetProfileCounters()
         board = play(moves)
         c_board = to_c_board(board)

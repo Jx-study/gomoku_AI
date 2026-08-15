@@ -19,7 +19,7 @@ typedef struct {
     int depth;               // 搜索深度
     int score;               // 評估分數
     char flag;                // 標誌（精確值、上界、下界）
-    signed char bestX, bestY; // 此局面的最佳走法（座標範圍 1-21，-1 表無記錄）
+    signed char bestX, bestY; // 此局面的最佳走法（座標範圍 0 ~ BOARD_MAX-1，-1 表無記錄）
 } HashEntry;
 
 typedef struct {
@@ -36,15 +36,26 @@ int getBoardMax(void) {
     return BOARD_MAX;
 }
 
+/* 64 位元亂數產生器（splitmix64）
+   不能用 rand()：Windows/mingw 的 RAND_MAX 是 32767，只有 15 位元，
+   `(rand() << 32) | rand()` 拼出來的 key 只有 bit 0-14 與 32-46 會是 1，
+   有效熵僅 30 位元。置換表 index（低 20 位元）因此只用得到 32768 個 bucket，
+   不同局面撞同一把 key 的假命中會實際發生。 */
+static unsigned long long splitmix64(unsigned long long *state) {
+    unsigned long long z = (*state += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
 // 初始化 Zobrist 哈希表
+// 種子固定：key 的分布不需要隨機，固定反而讓 A/B 對照與 selfplay 可重現
 void initZobristTable() {
-    srand(time(NULL));
+    unsigned long long state = 0x243F6A8885A308D3ULL;
     for (int i = 0; i < BOARD_MAX; i++) {
         for (int j = 0; j < BOARD_MAX; j++) {
             for (int k = 0; k < 2; k++) {
-                unsigned long long rand1 = (unsigned long long)rand();
-                unsigned long long rand2 = (unsigned long long)rand();
-                zobristTable[i][j][k] = (rand1 << 32) | rand2;
+                zobristTable[i][j][k] = splitmix64(&state);
             }
         }
     }
@@ -53,6 +64,11 @@ void initZobristTable() {
 // 初始化 置換表
 void initTranspositionTable() {
     memset(transpositionTable, 0, TABLE_SIZE * sizeof(HashEntry));
+    // 0 是合法座標，未寫入的 entry 必須用 -1 標記「無記錄」
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        transpositionTable[i].bestX = -1;
+        transpositionTable[i].bestY = -1;
+    }
 }
 
 // 計算初始哈希值
@@ -78,8 +94,10 @@ HashEntry* lookupHashEntry(unsigned long long zobristKey) {
 }
 
 // 更新哈希值
+// 索引順序必須與 computeZobristKey 的 board[y][x] 一致：findBestMove 進入時整盤
+// 重算 key、搜索中逐手 XOR，兩邊用不同的順序會讓同一個局面在不同手算出不同的 key
 void updateZobristKey(int x, int y, int player) {
-    currentZobristKey ^= zobristTable[x][y][player-1];  // 异或操作来更新哈希值
+    currentZobristKey ^= zobristTable[y][x][player-1];  // 异或操作来更新哈希值
 }
 
 // 存取哈希值進哈希表
@@ -559,8 +577,9 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
     // 先複製 TT 的 bestMove 到區域變數：遞迴子搜索的 always-replace 寫入
     // 可能覆蓋同一個 bucket，迴圈中不能再讀 entry 指標本身
+    // 棋盤是 0-indexed，(0,0) 是合法座標，判定用 >= 0 而非 > 0
     int ttMoveX = -1, ttMoveY = -1;
-    if (entry != NULL && entry->bestX > 0) {
+    if (entry != NULL && entry->bestX >= 0) {
         ttMoveX = entry->bestX;
         ttMoveY = entry->bestY;
     }
@@ -591,7 +610,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 
     // PV-Move ordering：TT 的 bestMove 不受 depth 限制，在完整候選列表（截斷前）
     // 找到後 memmove 到首位，同時把它從硬截斷中救回來
-    if (ttMoveX > 0) {
+    if (ttMoveX >= 0) {
         for (int i = 0; i < moveCount; i++) {
             if (moves[i].x == ttMoveX && moves[i].y == ttMoveY) {
                 if (i > 0) {

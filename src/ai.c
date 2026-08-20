@@ -13,10 +13,10 @@
 #define MAX_DEPTH 7 // 定義搜索深度
 /* 強制著法門檻：分數不低於此值的候選不受 top-N 截斷。
    實際保留的是哪些著法（照 quickEvaluate 現行權重逐條算，不是「成四等級」這麼乾淨）：
-     自己冲四        10000            → 保留（目標）
-     擋對手冲四      10000*4/5 = 8000 → 保留（目標）
-     自己活三        8000             → 保留（**順帶**：活三權重未縮放，正好等於門檻）
-     擋對手活三      8000*4/5 = 6400  → 不保留
+     自己冲四        10000            -> 保留（目標）
+     擋對手冲四      10000*4/5 = 8000 -> 保留（目標）
+     自己活三        8000             -> 保留（**順帶**：活三權重未縮放，正好等於門檻）
+     擋對手活三      8000*4/5 = 6400  -> 不保留
    這是代理指標不是精確判定：
    quickEvaluate 把攻防相加，所以「既擋半個威脅又順帶自己活二」的普通點也可能湊到門檻以上。
    它只保證不再漏掉強制手（寧可多留），代價是候選變多。
@@ -438,6 +438,126 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
     return 0;
 }
 
+/* ===== VCF：連續沖四的強制勝搜索 =====================================*/
+// 守方應手唯一（擋成五點），樹極窄，故能搜得比主搜索 7 層深很多。
+// 只算沖四／活四，不含應手不唯一的活三（那是 VCT）；守方擋出反四則放棄該線；
+// 守方已有成五點則沖四救不了——寧可漏殺，不可誤判必勝
+
+// 判定四不用 checkLine 分類，直接數成五點：恰 1 個是沖四，2 個以上是活四，
+// 與 judgeMove 共用同一套邏輯，避免邊界漂移
+
+#define VCF_MAX_PLY 16        // 攻方著手數上限（= 最多算 8 連沖）
+#define VCF_MAX_NODES 200000  // 節點預算：算殺樹窄是常態不是保證，仍需防爆炸
+#define VCF_MAX_FIVE_PTS 8
+
+static long long vcfNodes = 0;
+
+// 列出 player 落子即成五的空點，回傳總數（可能多於寫入 pts 的數量）
+static int listFivePoints(int board[BOARD_MAX][BOARD_MAX], int player,
+                          int minX, int maxX, int minY, int maxY,
+                          int pts[][2], int maxPts) {
+    int n = 0;
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = minX; x <= maxX; x++) {
+            if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+            if (judgeMove(board, x, y, player) != 2) continue;
+            if (n < maxPts) { pts[n][0] = x; pts[n][1] = y; }
+            n++;
+        }
+    }
+    return n;
+}
+
+// 列舉 player 的成四著法（含直接成五），依威脅程度降冪排序
+static int listFourMoves(int board[BOARD_MAX][BOARD_MAX], int player, Move *moves,
+                         int minX, int maxX, int minY, int maxY) {
+    int n = 0;
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = minX; x <= maxX; x++) {
+            if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+            int verdict = judgeMove(board, x, y, player);
+            if (verdict < 1) continue;   // 已有子，或黑棋禁手點不能當攻擊手段
+            if (verdict == 2) {          // 直接成五
+                moves[n++] = (Move){x, y, 1000000};
+                continue;
+            }
+            int line[14] = {0};
+            checkLine(board, x, y, player, line);
+            if (line[4] || line[10])      moves[n++] = (Move){x, y, 100000};  // 活四
+            else if (line[8] || line[12]) moves[n++] = (Move){x, y, 10000};   // 沖四
+        }
+    }
+    qsort(moves, n, sizeof(Move), Big_Small);
+    return n;
+}
+
+// attacker 從當前局面是否有連續沖四強制勝；是 -> 回傳 1 並把第一手寫入 *wx,*wy
+static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
+                     int minX, int maxX, int minY, int maxY, int *wx, int *wy) {
+    if (ply > VCF_MAX_PLY) return 0;
+    if (++vcfNodes > VCF_MAX_NODES) return 0;
+
+    int defender = 3 - attacker;
+    Move moves[BOARD_MAX * BOARD_MAX];
+    int n = listFourMoves(board, attacker, moves, minX, maxX, minY, maxY);
+
+    for (int i = 0; i < n; i++) {
+        int x = moves[i].x, y = moves[i].y;
+        if (judgeMove(board, x, y, attacker) == 2) {   // 直接成五，不必再算
+            *wx = x; *wy = y;
+            return 1;
+        }
+
+        board[y][x] = attacker;
+        int pts[VCF_MAX_FIVE_PTS][2];
+        int atkN = listFivePoints(board, attacker, minX, maxX, minY, maxY, pts, VCF_MAX_FIVE_PTS);
+        if (atkN == 0) { board[y][x] = 0; continue; }  // 沒造成成五威脅 -> 不具強制性
+
+        // 守方當下已能成五：他搶先落子就贏了，攻方的沖四救不回來
+        int defPts[VCF_MAX_FIVE_PTS][2];
+        if (listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS) > 0) {
+            board[y][x] = 0;
+            continue;
+        }
+
+        if (atkN >= 2) {   // 活四：守方擋一點，攻方下另一點即成五
+            board[y][x] = 0;
+            *wx = x; *wy = y;
+            return 1;
+        }
+
+        int bx = pts[0][0], by = pts[0][1];   // 沖四：守方唯一擋點
+        if (judgeMove(board, bx, by, defender) < 0) {   // 守方是黑棋且該點是禁手 -> 擋不了
+            board[y][x] = 0;
+            *wx = x; *wy = y;
+            return 1;
+        }
+
+        board[by][bx] = defender;
+        // 反四：守方的擋子同時做出自己的四，攻方必須回應 -> V1 保守放棄此線
+        int counterFour = listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS);
+        int win = 0;
+        if (counterFour == 0) {
+            int nx, ny;
+            win = vcfSearch(board, attacker, ply + 2, minX, maxX, minY, maxY, &nx, &ny);
+        }
+        board[by][bx] = 0;
+        board[y][x] = 0;
+
+        if (win) { *wx = x; *wy = y; return 1; }
+    }
+    return 0;
+}
+
+// 根節點入口：重置節點預算後開跑
+int vcfFindWin(int board[BOARD_MAX][BOARD_MAX], int attacker,
+               int minX, int maxX, int minY, int maxY, int *wx, int *wy) {
+    vcfNodes = 0;
+    return vcfSearch(board, attacker, 1, minX, maxX, minY, maxY, wx, wy);
+}
+
+long long getVcfNodes(void) { return vcfNodes; }
+
 // 啓發式函數Heuristic Function：快速評估落點后排序
 void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int minX, int maxX, int minY, int maxY, int player) {
     *count = 0;
@@ -545,7 +665,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
         /* 這條出口也必須排序。
            呼叫端（miniMax/findBestMove）的截斷延伸靠「降冪」才能在第一個低於門檻的
            位置停下來；少了這個 qsort，策略走法會按掃描順序交出去，而且多個策略
-           各自的哨兵分數（99999→100000→88888→66666）本身就不是遞減的。 */
+           各自的哨兵分數（99999->100000->88888->66666）本身就不是遞減的。 */
         qsort(moves, *count, sizeof(Move), Big_Small);
         return;
     }
@@ -714,6 +834,16 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     *bestX = moves[0].x;
     *bestY = moves[0].y;
 
+    /* 算殺：找到連續沖四的強制勝就直接走，不必進主搜索。
+       擺在 sortMoves 之後，endGame 快速路徑已處理「立即成五」與「必須擋五」，
+       而 vcfSearch 內部也會在守方已有成五點時放棄該線，不會為了搶攻而漏擋。 */
+    int vx, vy;
+    if (vcfFindWin(board, ai, minX, maxX, minY, maxY, &vx, &vy)) {
+        *bestX = vx;
+        *bestY = vy;
+        return;
+    }
+
     for (int d = 1; d <= maxDepth; d++) {
         int bestScore = INT_MIN;
         int bestIdx = 0;
@@ -767,6 +897,14 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
     *maxX = (*maxX + 2 < BOARD_MAX) ? *maxX + 2 : BOARD_MAX - 1;
     *minY = (*minY - 2 >= 0) ? *minY - 2 : 0;
     *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX - 1;
+}
+
+/* 測試用入口：自行計算邊界後跑算殺。
+   讓測試能直接驗證 VCF 本身，而不是隔著整個 aiRound 猜「這手是不是算殺算出來的」。 */
+int vcfProbe(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
+    int minX, maxX, minY, maxY;
+    getBounds(board, &minX, &maxX, &minY, &maxY);
+    return vcfFindWin(board, attacker, minX, maxX, minY, maxY, wx, wy);
 }
 
 // AI回合

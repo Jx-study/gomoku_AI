@@ -11,21 +11,11 @@
 #define MIDPOINT_X (BOARD_MAX / 2)
 #define MIDPOINT_Y (BOARD_MAX / 2)
 #define MAX_DEPTH 7 // 定義搜索深度
-/* 強制著法門檻：分數不低於此值的候選不受 top-N 截斷。
-   實際保留的是哪些著法（照 quickEvaluate 現行權重逐條算，不是「成四等級」這麼乾淨）：
-     自己冲四        10000            -> 保留（目標）
-     擋對手冲四      10000*4/5 = 8000 -> 保留（目標）
-     自己活三        8000             -> 保留（**順帶**：活三權重未縮放，正好等於門檻）
-     擋對手活三      8000*4/5 = 6400  -> 不保留
-   這是代理指標不是精確判定：
-   quickEvaluate 把攻防相加，所以「既擋半個威脅又順帶自己活二」的普通點也可能湊到門檻以上。
-   它只保證不再漏掉強制手（寧可多留），代價是候選變多。
-   實測：9.32% 的節點觸發、平均多留 2.85 個、單節點上限 21（基準 10），時間在雜訊內。
-   門檻與權重表強耦合（統一權重表）完成後必須回頭重算上面這張表。
-   更穩健的做法是在 sortMoves 用 checkLine 結果標記 forcing 旗標，
-   不靠分數猜（見計畫 Task 2 審核補充）。 */
+// 強制著法門檻：分數不低於此值的候選不受 top-N 截斷
+// 代理指標而非精確判定：攻防相加，普通點也可能湊到門檻以上
+// 改權重時要一併重算此值
 #define FORCING_SCORE 8000
-#define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 16MB
+#define TABLE_SIZE (1 << 20)   // 1,048,576 個 entry，約 24MB
 #define TABLE_MASK (TABLE_SIZE - 1)
 
 typedef struct {
@@ -50,11 +40,8 @@ int getBoardMax(void) {
     return BOARD_MAX;
 }
 
-/* 64 位元亂數產生器（splitmix64）
-   不能用 rand()：Windows/mingw 的 RAND_MAX 是 32767，只有 15 位元，
-   `(rand() << 32) | rand()` 拼出來的 key 只有 bit 0-14 與 32-46 會是 1，
-   有效熵僅 30 位元。置換表 index（低 20 位元）因此只用得到 32768 個 bucket，
-   不同局面撞同一把 key 的假命中會實際發生。 */
+// 64 位元亂數產生器（splitmix64）
+// 不能用 rand()：Windows/mingw 的 RAND_MAX 僅 15 位元，key 熵不足會造成 TT 假命中
 static unsigned long long splitmix64(unsigned long long *state) {
     unsigned long long z = (*state += 0x9E3779B97F4A7C15ULL);
     z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
@@ -63,7 +50,7 @@ static unsigned long long splitmix64(unsigned long long *state) {
 }
 
 // 初始化 Zobrist 哈希表
-// 種子固定：key 的分布不需要隨機，固定反而讓 A/B 對照與 selfplay 可重現
+// 種子固定：key 分布不需隨機，固定反而讓 A/B 對照可重現
 void initZobristTable() {
     unsigned long long state = 0x243F6A8885A308D3ULL;
     for (int i = 0; i < BOARD_MAX; i++) {
@@ -78,7 +65,7 @@ void initZobristTable() {
 // 初始化 置換表
 void initTranspositionTable() {
     memset(transpositionTable, 0, TABLE_SIZE * sizeof(HashEntry));
-    // 0 是合法座標，未寫入的 entry 必須用 -1 標記「無記錄」
+    // 0 是合法座標，未寫入的 entry 必須用 -1 標記無記錄
     for (int i = 0; i < TABLE_SIZE; i++) {
         transpositionTable[i].bestX = -1;
         transpositionTable[i].bestY = -1;
@@ -108,8 +95,8 @@ HashEntry* lookupHashEntry(unsigned long long zobristKey) {
 }
 
 // 更新哈希值
-// 索引順序必須與 computeZobristKey 的 board[y][x] 一致：findBestMove 進入時整盤
-// 重算 key、搜索中逐手 XOR，兩邊用不同的順序會讓同一個局面在不同手算出不同的 key
+// 索引順序必須與 computeZobristKey 的 board[y][x] 一致
+// 否則整盤重算與逐手 XOR 對不起來，同一局面在不同手會算出不同的 key
 void updateZobristKey(int x, int y, int player) {
     currentZobristKey ^= zobristTable[y][x][player-1];  // 异或操作来更新哈希值
 }
@@ -187,7 +174,7 @@ void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my
 
         // Debug output
         //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d, gap = %d\n", i, count, maxConnect,openEnds, op_num, gaps);
-        // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+        // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
         // 判斷是否符合條件
         // 特殊情況優先處理，例如 "X01112"或是"011X10"
         if(gaps == 1){
@@ -208,7 +195,7 @@ void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my
             else if (count == 5 && gaps == 0) my_line[5]++;     // 五连
             else if (openEnds == 1 && op_num == 1 && maxConnect == 2)my_line[6]++;  // 眠二
             else if (openEnds == 1 && op_num == 1 && maxConnect == 3)my_line[7]++;  // 眠三
-            else if (openEnds == 1 && op_num == 1&& maxConnect == 4)my_line[8]++;  // 冲四
+            else if (openEnds == 1 && op_num == 1&& maxConnect == 4)my_line[8]++;  // 衝四
             else if (openEnds > 1 && maxConnect >= 2)my_line[maxConnect]++;  // 活二、活三、活四
 
         }
@@ -226,23 +213,53 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
     }
 }
 
-/* 統一的「落子判定」：對「player 在 (x,y) 落子」這個動作做完整分類。
-   checkUnValid 與 endGame 共用此函數，避免規則邏輯分散在多處而漂移。
+// 落子後通過該點的最長連續棋子數；hasFive 回報是否有任一方向恰好五連
+// 勝負與長連只看連續長度，checkLine 的分類對分裂形狀會漏判
+// 兩者分開回報：五連與長連可能同時出現在不同方向，只看最長值會誤判黑棋禁手
+int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *hasFive) {
+    int dx[] = {1, 1, 0, -1};
+    int dy[] = {0, 1, 1, 1};
+    int best = 0;
+    *hasFive = 0;
+
+    for (int i = 0; i < 4; i++) {
+        int run = 1;   // 包含假設落子的這一顆
+        for (int direction = -1; direction <= 1; direction += 2) {
+            for (int j = 1; ; j++) {
+                int nx = x + j * dx[i] * direction;
+                int ny = y + j * dy[i] * direction;
+                if (nx < 0 || nx >= BOARD_MAX || ny < 0 || ny >= BOARD_MAX) break;
+                if (board[ny][nx] != player) break;
+                run++;
+            }
+        }
+        if (run == 5) *hasFive = 1;
+        if (run > best) best = run;
+    }
+    return best;
+}
+
+/* 落子判定：checkUnValid 與 endGame 共用，避免規則邏輯分散而漂移。
    回傳： 2 = 勝著（五連；白棋長連也算勝）
           1 = 一般合法著法
           0 = 已有棋子
          -3/-4/-6 = 黑棋禁手（三三/四四/長連） */
 int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     if (board[y][x] != 0) return 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+    int hasFive;
+    int run = maxRunAt(board, x, y, player, &hasFive);
+    if (hasFive) return 2;                        // 五連即勝，優先於一切禁手
+    if (run > 5) {
+        if (player == 2) return 2;                // 長連只對白棋算勝
+        return -6;                                // 黑棋長連禁手
+    }
+
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int line[14] = {0};
     checkLine(board, x, y, player, line);
-    if (line[5] > 0) return 2;                    // 五連即勝，優先於一切禁手
-    if (player == 2 && line[13] > 0) return 2;    // 長連只對白棋算勝
     if (player == 1) {
         if ((line[3] + line[9]) >= 2) return -3;
         if ((line[4] + line[8] + line[10] + line[12]) >= 2) return -4;
-        if (line[13] >= 1) return -6;
     }
     return 1;
 }
@@ -258,18 +275,18 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
 int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX, int minY, int maxY,int player) {
     // 根据进攻和防守策略评估位置的函数
     int total_score = 0, attack = 0, defence = 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 该位置落子后，自己和对手的连线数
 
     // 更新
     checkLine(board, x, y, player, my_line);
     checkLine(board, x, y, 3-player, op_line);
 
-    // 進攻策略 - 提升關鍵連線得分，特別是活四、沖四、跳四
+    // 進攻策略 - 提升關鍵連線得分，特別是活四、衝四、跳四
     attack   += 1000000 * my_line[5] +  // 五連
                 100000  * my_line[4] +  // 活四
                 20000   * my_line[10]+  // 跳活四
-                10000   * my_line[8] +  // 沖四
+                10000   * my_line[8] +  // 衝四
                 7000    * my_line[12]+  // 跳四
                 8000    * my_line[3] +  // 活三
                 4000    * my_line[9] +  // 跳活三
@@ -283,11 +300,11 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
         attack += 500000;  
     }
 
-    // 防守策略 - 防守時同樣拉大連線得分差距，尤其是活四、沖四等關鍵連線
+    // 防守策略 - 防守時同樣拉大連線得分差距，尤其是活四、衝四等關鍵連線
     defence  += 1000000 * op_line[5] +  // 五連
                 100000  * op_line[4] +  // 活四
                 20000   * op_line[10]+  // 跳活四
-                10000   * op_line[8] +  // 沖四
+                10000   * op_line[8] +  // 衝四
                 7000    * op_line[12]+  // 跳四
                 8000    * op_line[3] +  // 活三
                 4000    * op_line[9] +  // 跳活三
@@ -297,8 +314,8 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 10      * op_line[6];   // 眠二
 
     // 計算（整數運算：避免浮點轉換的精度損耗）
-    // 注意：此處是 attack + defence（排序用：攻或防有價值的點都該排前面），
-    // 與 evaluate 的 attack - defence 聚合方式不同，是刻意設計，不要「順手統一」。
+    // 排序用 attack + defence：攻或防有價值的點都該排前面
+    // 與 evaluate 的 attack - defence 不同，是刻意的
     total_score += attack + defence * 4 / 5;
     // 增加防守
     if(attack <= defence) total_score += defence / 10;
@@ -309,18 +326,18 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
 int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY,int player) {
     // 初始化總分(避免劣勢時全部都是負分無法計算)、自己與對手的分數
     int total_score = 12000, attack = 0, defence = 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
 
     // 更新
     checkNow(board, minX, maxX, minY,  maxY, player, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
-    // 優先級：五連>活四>跳活四>冲四=活三>跳四>
+    // 優先級：五連>活四>跳活四>衝四=活三>跳四>
     // 進攻策略
     attack   += 9999999 * (my_now[5]/5) +   // 五連
                 20000   * (my_now[4]/4) +   // 活四
                 15000   * (my_now[10]/4)+   // 跳活四
-                10000   * (my_now[8]/4) +   // 冲四
+                10000   * (my_now[8]/4) +   // 衝四
                 10000   * (my_now[12]/4)+   // 跳四
                 7000    * (my_now[3]/3) +   // 活三
                 4000    * (my_now[9]/3) +  // 跳活三
@@ -333,7 +350,7 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     defence  += 9999999 * (op_now[5]/5) +   // 五連
                 20000   * (op_now[4]/4) +   // 活四
                 15000   * (op_now[10]/4)+   // 跳活四
-                10000   * (op_now[8]/4) +   // 冲四
+                10000   * (op_now[8]/4) +   // 衝四
                 10000   * (op_now[12]/4)+   // 跳四
                 7000    * (op_now[3]/3) +   // 活三
                 4000    * (op_now[9]/3) +  // 跳活三
@@ -342,24 +359,24 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 20      * (op_now[2]/2) +   // 活二
                 5       * (op_now[6]/2);    // 眠二
     
-    // 若對手已經有活四(有可能是未來)，可是我沒有活四/冲四(非常危險-->幾乎沒救了)
-    if (op_now[4] > 0 && (my_now[4] == 0 || my_now[8] == 0)) {
+    // 若對手已經有活四(有可能是未來)，可是我沒有活四/衝四(非常危險-->幾乎沒救了)
+    if (op_now[4] > 0 && (my_now[4] == 0 && my_now[8] == 0)) {
         if (my_now[5] == 0)
             defence += 4000; 
     }
-    // 若對手已經有冲四(有可能是未來)，可是我沒有活四/冲四(危險)
-    else if ((op_now[8] > 0) && (my_now[4] == 0 || my_now[8] == 0)) {
+    // 若對手已經有衝四(有可能是未來)，可是我沒有活四/衝四(危險)
+    else if ((op_now[8] > 0) && (my_now[4] == 0 && my_now[8] == 0)) {
         if (my_now[5] == 0)
             defence += 900;
     }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
     else if ((op_now[3] > 0) && (my_now[3] == 0)) {
-        if (my_now[4] == 0|| my_now[8] == 0){
+        if (my_now[4] == 0 && my_now[8] == 0){
             if(my_now[5] == 0)
                 defence += 1000;
         }    
     }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的
-    else if ((op_now[7] > 0) && (my_now[7] == 0||my_now[3] == 0)) {
-        if (my_now[4] == 0|| my_now[8] == 0){
+    else if ((op_now[7] > 0) && (my_now[7] == 0 && my_now[3] == 0)) {
+        if (my_now[4] == 0 && my_now[8] == 0){
             if(my_now[5] == 0)
                 defence += 100;
         }    
@@ -369,8 +386,8 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     }
 
     // 計算（整數運算：避免浮點轉換的精度損耗）
-    // 0.6 / 0.8 係數是「執黑 vs 執白時激進程度不同」的調參選擇（ai 在一局內固定，
-    // 單次搜索內為常數），非正確性問題；是否統一留待 Texel tuning 決定。
+    // 3/5 與 4/5：執黑與執白的激進程度不同，非正確性問題
+    // ai 在一局內固定，單次搜索中為常數
     if(player == 1)total_score +=  attack - defence * 3 / 5;
     else total_score +=  attack - defence * 4 / 5;
     // 強化防守策略，根據當前的局勢
@@ -422,7 +439,7 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
-                    // 實際落子的是 currentPlayer：黑棋禁手點不能下（成五回傳 2，勝著不受影響）
+                    // 實際落子的是 currentPlayer，黑棋禁手點不能下
                     if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;
                     // ai勝利（直接落子）/ 對手勝利（防守）：單點判定，免落子、免全盤掃描
                     if (judgeMove(board, x, y, player) == 2) {
@@ -438,13 +455,13 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
     return 0;
 }
 
-/* ===== VCF：連續沖四的強制勝搜索 =====================================*/
+// VCF：連續衝四的強制勝搜索
 // 守方應手唯一（擋成五點），樹極窄，故能搜得比主搜索 7 層深很多。
-// 只算沖四／活四，不含應手不唯一的活三（那是 VCT）；守方擋出反四則放棄該線；
-// 守方已有成五點則沖四救不了——寧可漏殺，不可誤判必勝
+// 只算衝四／活四，不含應手不唯一的活三（那是 VCT）；守方擋出反四則放棄該線；
+// 守方已有成五點則衝四救不了——寧可漏殺，不可誤判必勝
 
-// 判定四不用 checkLine 分類，直接數成五點：恰 1 個是沖四，2 個以上是活四，
-// 與 judgeMove 共用同一套邏輯，避免邊界漂移
+// 直接數成五點而非用 checkLine 分類：恰 1 個是衝四，2 個以上是活四
+// 與 judgeMove 共用同一套判定，避免規則漂移
 
 #define VCF_MAX_PLY 16        // 攻方著手數上限（= 最多算 8 連沖）
 #define VCF_MAX_NODES 200000  // 節點預算：算殺樹窄是常態不是保證，仍需防爆炸
@@ -484,14 +501,14 @@ static int listFourMoves(int board[BOARD_MAX][BOARD_MAX], int player, Move *move
             int line[14] = {0};
             checkLine(board, x, y, player, line);
             if (line[4] || line[10])      moves[n++] = (Move){x, y, 100000};  // 活四
-            else if (line[8] || line[12]) moves[n++] = (Move){x, y, 10000};   // 沖四
+            else if (line[8] || line[12]) moves[n++] = (Move){x, y, 10000};   // 衝四
         }
     }
     qsort(moves, n, sizeof(Move), Big_Small);
     return n;
 }
 
-// attacker 從當前局面是否有連續沖四強制勝；是 -> 回傳 1 並把第一手寫入 *wx,*wy
+// attacker 是否有連續衝四強制勝；是則回傳 1 並寫入首手 *wx,*wy
 static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
                      int minX, int maxX, int minY, int maxY, int *wx, int *wy) {
     if (ply > VCF_MAX_PLY) return 0;
@@ -513,7 +530,7 @@ static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
         int atkN = listFivePoints(board, attacker, minX, maxX, minY, maxY, pts, VCF_MAX_FIVE_PTS);
         if (atkN == 0) { board[y][x] = 0; continue; }  // 沒造成成五威脅 -> 不具強制性
 
-        // 守方當下已能成五：他搶先落子就贏了，攻方的沖四救不回來
+        // 守方當下已能成五：他搶先落子就贏了，攻方的衝四救不回來
         int defPts[VCF_MAX_FIVE_PTS][2];
         if (listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS) > 0) {
             board[y][x] = 0;
@@ -526,7 +543,7 @@ static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
             return 1;
         }
 
-        int bx = pts[0][0], by = pts[0][1];   // 沖四：守方唯一擋點
+        int bx = pts[0][0], by = pts[0][1];   // 衝四：守方唯一擋點
         if (judgeMove(board, bx, by, defender) < 0) {   // 守方是黑棋且該點是禁手 -> 擋不了
             board[y][x] = 0;
             *wx = x; *wy = y;
@@ -534,7 +551,7 @@ static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
         }
 
         board[by][bx] = defender;
-        // 反四：守方的擋子同時做出自己的四，攻方必須回應 -> V1 保守放棄此線
+        // 反四：守方的擋子同時做出自己的四，攻方必須回應，保守放棄此線
         int counterFour = listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS);
         int win = 0;
         if (counterFour == 0) {
@@ -575,8 +592,8 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     checkNow(board, minX, maxX, minY, maxY, 3 - player, op_now);
     
     // 策略：條件+分數+檢查對象
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:冲四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
-    // 優先級：五連>活四>跳活四>冲四=活三>跳四>....
+    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
+    // 優先級：五連>活四>跳活四>衝四=活三>跳四>....
     struct {
         bool condition;
         int score;
@@ -604,7 +621,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
             88888,
             3 - player  // 檢查對手
         },
-        // 第五優先級：無腦冲四
+        // 第五優先級：無腦衝四
         {
             my_now[7]>0 || my_now[11]>0,
             66666,
@@ -643,7 +660,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
                     case 2: 
                         valid_move = line[4] >= 1 || line[10] >= 1;
                         break;
-                    // 主动创建冲四
+                    // 主动创建衝四
                     case 3:
                         valid_move = line[8] >= 1 || line[10] >= 1 || line[12] >= 1;
                         break;
@@ -657,15 +674,11 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
             }
         }
     }
-    /* 已知限制（A6 的截斷保險救不了這裡）：
-       策略走法超過 4 個時直接跳過通用評估，此時候選列表根本沒生成一般著法。
-       miniMax/findBestMove 的門檻延伸只能把**已生成**的強制手從截斷中救回來，
-       救不了沒被生成的走法。這是獨立的生成問題，另開項目處理。 */
+    // 已知限制：策略走法超過 4 個時跳過通用評估，一般著法根本沒生成
+    // 截斷延伸只救得回已生成的強制手
     if (*count > 4) {
-        /* 這條出口也必須排序。
-           呼叫端（miniMax/findBestMove）的截斷延伸靠「降冪」才能在第一個低於門檻的
-           位置停下來；少了這個 qsort，策略走法會按掃描順序交出去，而且多個策略
-           各自的哨兵分數（99999->100000->88888->66666）本身就不是遞減的。 */
+        // 這條出口也必須排序：呼叫端的截斷延伸靠降冪才能在第一個低於門檻處停下
+        // 策略哨兵分數本身不遞減
         qsort(moves, *count, sizeof(Move), Big_Small);
         return;
     }
@@ -714,15 +727,12 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         return evaluate(board, minX, maxX, minY, maxY, ai);
     }
 
-    // TT flag 判定必須對照進入節點時的原始邊界，不能用迴圈中被更新過的 alpha/beta
-    int alphaOrig = alpha, betaOrig = beta;
-
     // 在置換表中查找當前棋盤狀態
     HashEntry* entry = lookupHashEntry(currentZobristKey);
 
-    // 先複製 TT 的 bestMove 到區域變數：遞迴子搜索的 always-replace 寫入
+    // 先複製 bestMove 到區域變數：遞迴的 always-replace 寫入
     // 可能覆蓋同一個 bucket，迴圈中不能再讀 entry 指標本身
-    // 棋盤是 0-indexed，(0,0) 是合法座標，判定用 >= 0 而非 > 0
+    // (0,0) 是合法座標，判定用 >= 0 而非 > 0
     int ttMoveX = -1, ttMoveY = -1;
     if (entry != NULL && entry->bestX >= 0) {
         ttMoveX = entry->bestX;
@@ -747,13 +757,17 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
         }
     }
 
+    // flag 必須對照實際搜索用的視窗：TT 命中會收窄 alpha/beta
+    // 用收窄前的邊界會把上界誤存成 'E'，覆蓋更深的正確 entry
+    int alphaOrig = alpha, betaOrig = beta;
+
     int bestScore = isMaximizing ? INT_MIN : INT_MAX;
     int moveCount = 0;
     Move moves[BOARD_MAX * BOARD_MAX];
     sortMoves(board, moves, &moveCount, minX, maxX, minY, maxY, currentPlayer);
     if (moveCount == 0) return isMaximizing ? INT_MIN : INT_MAX;
 
-    // PV-Move ordering：TT 的 bestMove 不受 depth 限制，在完整候選列表（截斷前）
+    // PV-Move ordering：bestMove 不受 depth 限制，在截斷前的列表
     // 找到後 memmove 到首位，同時把它從硬截斷中救回來
     if (ttMoveX >= 0) {
         for (int i = 0; i < moveCount; i++) {
@@ -769,8 +783,8 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     }
 
     // 截斷保險：候選是降冪排序的，所以「保留所有 >= 門檻的著法」等於把截斷點
-    // 往後延到第一個低於門檻的位置。必須放在 PV-Move 搬移之後——moves[0] 被換成
-    // TT move 後分數不再有序，但 moves[1..] 仍是降冪，而 count >= 1
+    // 延到第一個低於門檻的位置；必須在 PV-Move 搬移之後
+    // moves[0] 換成 TT move 後不再有序，但 moves[1..] 仍降冪
     int count = moveCount > 10 ? 10 : moveCount;
     while (count < moveCount && moves[count].score >= FORCING_SCORE) count++;
     int bestMx = moves[0].x, bestMy = moves[0].y;
@@ -834,9 +848,8 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     *bestX = moves[0].x;
     *bestY = moves[0].y;
 
-    /* 算殺：找到連續沖四的強制勝就直接走，不必進主搜索。
-       擺在 sortMoves 之後，endGame 快速路徑已處理「立即成五」與「必須擋五」，
-       而 vcfSearch 內部也會在守方已有成五點時放棄該線，不會為了搶攻而漏擋。 */
+    // 算殺：找到強制勝就直接走，不必進主搜索
+    // 擺在 sortMoves 之後，成五/擋五已由 endGame 快速路徑處理
     int vx, vy;
     if (vcfFindWin(board, ai, minX, maxX, minY, maxY, &vx, &vy)) {
         *bestX = vx;
@@ -899,8 +912,7 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
     *maxY = (*maxY + 2 < BOARD_MAX) ? *maxY + 2 : BOARD_MAX - 1;
 }
 
-/* 測試用入口：自行計算邊界後跑算殺。
-   讓測試能直接驗證 VCF 本身，而不是隔著整個 aiRound 猜「這手是不是算殺算出來的」。 */
+// 測試用入口：自行算邊界後跑算殺，不必隔著 aiRound 驗證 VCF
 int vcfProbe(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
     int minX, maxX, minY, maxY;
     getBounds(board, &minX, &maxX, &minY, &maxY);

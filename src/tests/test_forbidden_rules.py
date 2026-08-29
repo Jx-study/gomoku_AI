@@ -74,6 +74,35 @@ def judge():
     return _judge
 
 
+@pytest.fixture(scope="module")
+def raw_judge():
+    """回傳 raw_judge(stones, x, y, player) -> judgeMove 的原始回傳值。
+
+    與 `judge` 不同，這裡不把「勝著」摺疊成 1，因此可以直接驗證
+    2 = 五連/白棋長連。
+    """
+    lib = ctypes.CDLL(LIB_PATH)
+    lib.getBoardMax.restype = ctypes.c_int
+    board_max = lib.getBoardMax()
+
+    lib.judgeMove.restype = ctypes.c_int
+    lib.judgeMove.argtypes = [
+        ctypes.POINTER(ctypes.c_int * board_max * board_max),
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ]
+
+    board_type = (ctypes.c_int * board_max) * board_max
+
+    def _judge(stones, x, y, player=BLACK):
+        board = board_type()
+        for sx, sy, colour in stones:
+            board[sy][sx] = colour
+        return lib.judgeMove(ctypes.byref(board), x, y, player)
+
+    _judge.mid = board_max // 2
+    return _judge
+
+
 def is_legal(result):
     return result == 1
 
@@ -188,27 +217,16 @@ class TestBlackOverline:
         stones = line(7, [2, 3, 4, 5, 6], BLACK) + line(7, [8], BLACK)
         assert not is_legal(judge(stones, 7, 7))
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="checkLine 切換掃描方向時會重設連續長度，四子在一側、"
-               "一子在另一側時 maxConnect 只算到 5，六連被記成五連而讓"
-               "黑棋以長連獲勝。修復見 Note/plans/03-datastructure.md D1"
-               "（棋型查表）——checkLine 同時供評估使用，改動需 selfplay 比對。",
-    )
     def test_six_with_four_on_one_side_and_one_on_other(self, judge):
         """左 4 右 1 填中間成六連。
 
         盤面與 test_six_by_filling_gap 的其他構型完全等價（同樣是連續
-        六子），判定卻不同，可見問題出在掃描方式而非規則本身。
+        六子）。曾因 checkLine 的棋型分類漏判而判成合法，現由
+        judgeMove 直接數連續長度（maxRunAt）處理。
         """
         stones = line(7, [3, 4, 5, 6], BLACK) + line(7, [8], BLACK)
         assert not is_legal(judge(stones, 7, 7))
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason="同上；水平/垂直/主對角線皆受影響，副對角線因掃描順序"
-               "不同而僥倖正確，故不使用 strict。",
-    )
     @pytest.mark.parametrize("dx,dy", [(1, 0), (0, 1), (1, 1), (1, -1)])
     def test_six_four_one_split_in_all_directions(self, judge, dx, dy):
         mid = judge.mid
@@ -221,3 +239,73 @@ class TestOccupiedSquare:
     @pytest.mark.parametrize("player", [BLACK, WHITE])
     def test_occupied_returns_zero(self, judge, player):
         assert judge([(7, 7, BLACK)], 7, 7, player) == 0
+
+
+class TestFiveDetectionIgnoresShape:
+    """成五/長連判定必須只看連續長度，不受周圍棋型影響。
+
+    曾有的錯誤：judgeMove 透過 checkLine 的棋型分類判斷勝負，而
+    checkLine 的 gaps == 1 分支只處理 count 為 3、4 的情形。當落子點
+    隔一格外還有己方棋子時 count >= 5，所有子條件皆落空、回傳全零，
+    於是「明明成五」被判成普通著法——AI 因此漏擋而輸棋。
+    現改由 maxRunAt 直接數連續長度。
+    """
+
+    WIN = 2
+
+    @pytest.mark.parametrize("extra", [3, 2, 1, 0])
+    @pytest.mark.parametrize("player", [BLACK, WHITE])
+    def test_five_detected_with_far_friendly_stone(self, raw_judge, player, extra):
+        """落子點左側隔一格外另有己方棋子時，仍須認得五連。
+
+        盤面如 `W . _ W W W W`：填入 _ 成五，額外那顆隔開的遠方棋子
+        不該讓判定失效（它與五連之間有空位，不構成長連）。
+        """
+        stones = line(7, [8, 9, 10, 11], player) + line(7, [extra], player)
+        assert raw_judge(stones, 7, 7, player) == self.WIN
+
+    @pytest.mark.parametrize("player", [BLACK, WHITE])
+    def test_five_detected_with_gap_on_both_sides(self, raw_judge, player):
+        """兩側都隔一格另有己方棋子，中間仍是乾淨的五連。"""
+        stones = (line(7, [2], player) + line(7, [4, 5, 6, 7], player)
+                  + line(7, [10], player))
+        assert raw_judge(stones, 8, 7, player) == self.WIN
+
+    @pytest.mark.parametrize("dx,dy", [(1, 0), (0, 1), (1, 1), (1, -1)])
+    @pytest.mark.parametrize("player", [BLACK, WHITE])
+    def test_five_detected_in_all_directions(self, raw_judge, player, dx, dy):
+        mid = raw_judge.mid
+        stones = [(mid + k * dx, mid + k * dy, player) for k in (1, 2, 3, 4)]
+        stones.append((mid - 2 * dx, mid - 2 * dy, player))   # 隔一格的遠方棋子（不接續）
+        assert raw_judge(stones, mid, mid, player) == self.WIN
+
+    def test_black_five_beats_double_three(self, raw_judge):
+        """五連優先於禁手：同時成五連與雙三時，黑棋勝而非違規。"""
+        stones = (line(7, [3, 4, 5, 6], BLACK)
+                  + [(7, 5, BLACK), (7, 6, BLACK), (7, 8, BLACK), (7, 9, BLACK)])
+        assert raw_judge(stones, 7, 7, BLACK) == self.WIN
+
+    def test_black_five_beats_overline_in_another_direction(self, raw_judge):
+        """五連優先於禁手：水平恰好五連、垂直長連時，黑棋勝而非長連禁手。
+
+        只取四個方向的最長連續長度會讓垂直的七連蓋過水平的五連，
+        因此 maxRunAt 另外回報「有無任一方向恰好五連」。
+        """
+        stones = (line(7, [8, 9, 10, 11], BLACK)
+                  + [(7, y, BLACK) for y in (4, 5, 6, 8, 9, 10)])
+        assert raw_judge(stones, 7, 7, BLACK) == self.WIN
+
+    def test_white_five_with_overline_in_another_direction_is_win(self, raw_judge):
+        """白棋兩者皆勝，方向如何組合都應回傳勝著。"""
+        stones = (line(7, [8, 9, 10, 11], WHITE)
+                  + [(7, y, WHITE) for y in (4, 5, 6, 8, 9, 10)])
+        assert raw_judge(stones, 7, 7, WHITE) == self.WIN
+
+    def test_black_split_overline_is_forbidden(self, raw_judge):
+        """左 3 右 3 填中間成七連，黑棋長連禁手（不可判成勝著）。"""
+        stones = line(7, [4, 5, 6], BLACK) + line(7, [8, 9, 10], BLACK)
+        assert raw_judge(stones, 7, 7, BLACK) < 0
+
+    def test_white_split_overline_is_win(self, raw_judge):
+        stones = line(7, [4, 5, 6], WHITE) + line(7, [8, 9, 10], WHITE)
+        assert raw_judge(stones, 7, 7, WHITE) == self.WIN

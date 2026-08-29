@@ -1,4 +1,4 @@
-"""VCF（連續沖四強制勝）算殺搜索測試。
+"""VCF（連續衝四強制勝）算殺搜索測試。
 
 測試直接打 `vcfProbe`（算殺入口）而不是隔著 `aiRound` 猜，這樣「這手是不是算殺算出來的」
 不必用時間或走法去推論。另外有一組端到端測試，把連殺實際下完確認真的成五。
@@ -42,7 +42,7 @@ BLACK, WHITE = 1, 2
 #   橫排 y=0：白 (-2,0) (-1,0) (0,0)，左端被黑 (-3,0) 堵住
 #   直行 x=1：白 (1,1) (1,2)
 #
-#   第 1 手 白(1,0) → 橫排成四 (-2..1)，左端是黑子，成五點只有 (2,0) 一個 → 沖四
+#   第 1 手 白(1,0) → 橫排成四 (-2..1)，左端是黑子，成五點只有 (2,0) 一個 → 衝四
 #   黑被迫擋 (2,0)
 #   第 2 手 白(1,3) → 直行成四 (1,0)(1,1)(1,2)(1,3)，兩端 (1,-1)(1,4) 都空 → 活四
 #   黑擋不完 → 白成五
@@ -160,7 +160,7 @@ class TestScenarioSanity:
     """先確認場景擺對了，再拿它去驗證引擎。"""
 
     def test_first_move_is_a_simple_four(self, ai):
-        """白 (1,0) 之後成五點恰好一個 → 是沖四，不是活四也不是普通手。"""
+        """白 (1,0) 之後成五點恰好一個 → 是衝四，不是活四也不是普通手。"""
         after = LADDER + [(1, 0, WHITE)]
         assert ai.five_points(after, WHITE) == [(2, 0)]
 
@@ -220,7 +220,7 @@ class TestNoFalseWin:
         assert not found
 
     def test_no_vcf_when_defender_wins_first(self, ai):
-        """守方已有成五點時，攻方的沖四救不回來，不能回報必勝。"""
+        """守方已有成五點時，攻方的衝四救不回來，不能回報必勝。"""
         pos = [(-2, 0, WHITE), (-1, 0, WHITE), (0, 0, WHITE),
                (1, 1, WHITE), (1, 2, WHITE), (-3, 0, BLACK),
                # 黑棋橫排四顆，下一手就能成五
@@ -230,7 +230,7 @@ class TestNoFalseWin:
         assert not found, "守方能搶先成五，VCF 卻回報必勝"
 
     def test_defends_instead_of_attacking(self, ai):
-        """對手有沖四時整個引擎必須擋，不能被算殺帶著去搶攻。"""
+        """對手有衝四時整個引擎必須擋，不能被算殺帶著去搶攻。"""
         pos = [(-2, 0, WHITE), (-1, 0, WHITE), (0, 0, WHITE),
                (1, 1, WHITE), (1, 2, WHITE), (-3, 0, BLACK),
                (-2, 5, BLACK), (-1, 5, BLACK), (0, 5, BLACK), (1, 5, BLACK)]

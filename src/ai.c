@@ -276,7 +276,11 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
     // 根据进攻和防守策略评估位置的函数
     int total_score = 0, attack = 0, defence = 0;
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-    int my_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_line[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 该位置落子后，自己和对手的连线数
+    int my_line[14] = {0}, op_line[14] = {0}; // 该位置落子后，自己和对手的连线数
+
+    // 成五直接給最高分：checkLine 對分裂形狀（隔格成五）會分類成全零
+    // 與 judgeMove/maxRunAt 共用同一套判定，避免這類點被 score != 0 濾掉
+    if (judgeMove(board, x, y, player) == 2) return 2000000;
 
     // 更新
     checkLine(board, x, y, player, my_line);
@@ -691,7 +695,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
 
             // 快速评估位置价值
             int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
-            if (score != 0) {  // 修改為 != 0
+            if (score != 0) {  // 0 分點無攻防價值，不佔候選名額
                 moves[(*count)++] = (Move){x, y, score};
             }
         }

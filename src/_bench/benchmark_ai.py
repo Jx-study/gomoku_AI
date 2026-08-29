@@ -141,14 +141,39 @@ def bench_repeated_position(dll_path, label, repeats=3):
         print(f"  call {r+1}: {t1 - t0:.3f}s")
 
 
-def profile_evaluate_share(dll_path="./ai_profiled.dll"):
-    """方案 B：量測 evaluate() 是否仍是瓶頸（需要 ai_profiled.dll，見 ai_profiled.c）。
-    回報 evaluate() 佔 aiRound() 總耗時的比例，以及 evaluate 呼叫次數 / miniMax 節點數的比例。"""
+# 插樁的函數：(顯示名, 計數器符號, 取秒數的函數名或 None)
+PROFILED = [
+    ("miniMax",       "g_miniMaxCalls",       None),
+    ("sortMoves",     "g_sortMovesCalls",     "getSortMovesSeconds"),
+    ("endGame",       "g_endGameCalls",       "getEndGameSeconds"),
+    ("evaluate",      "g_evaluateCalls",      "getEvaluateSeconds"),
+    ("quickEvaluate", "g_quickEvaluateCalls", "getQuickEvaluateSeconds"),
+    ("checkWin",      "g_checkWinCalls",      "getCheckWinSeconds"),
+    ("checkLine",     "g_checkLineCalls",     "getCheckLineSeconds"),
+    ("judgeMove",     "g_judgeMoveCalls",     "getJudgeMoveSeconds"),
+]
+
+
+def profile_hotspots(dll_path="./ai_profiled.dll"):
+    """量測各函數佔 aiRound 單手耗時的比例（需要 ai_profiled.dll）。
+
+    先跑：python gen_profiled.py && gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c
+
+    這些秒數是 inclusive 且互相巢狀的（checkLine 被 evaluate/sortMoves/endGame 呼叫），
+    所以不能相加當 100%。每一行各自讀作「該函數的總耗時佔這一手的比例」。
+    miniMax 是遞迴的，inclusive 時間等於整次搜索，因此只計次不計時。
+
+    呼叫次數極高的函數（checkLine、judgeMove）的佔比含計時本身的開銷，會偏高。
+    排名可信，絕對數字不可信。
+    """
     lib = bind_lib(dll_path)
     lib.resetProfileCounters.restype = None
-    lib.getEvaluateSeconds.restype = ctypes.c_double
+    for _, _, getter in PROFILED:
+        if getter:
+            getattr(lib, getter).restype = ctypes.c_double
 
-    print(f"\n=== 方案 B: evaluate() 佔比量測 ({dll_path}) ===")
+    print(f"\n=== 熱點量測 ({dll_path}) ===")
+    print("   秒數為 inclusive 且巢狀，不可相加")
     for name, moves in scenarios():
         lib.resetProfileCounters()
         board = play(moves)
@@ -159,17 +184,18 @@ def profile_evaluate_share(dll_path="./ai_profiled.dll"):
         t0 = time.perf_counter()
         lib.aiRound(ctypes.byref(c_board), 2, len(moves) + 1,
                     ctypes.byref(bestx), ctypes.byref(besty))
-        t1 = time.perf_counter()
-        wall = t1 - t0
+        wall = time.perf_counter() - t0
 
-        eval_calls = ctypes.c_longlong.in_dll(lib, "g_evaluateCalls").value
-        minimax_calls = ctypes.c_longlong.in_dll(lib, "g_miniMaxCalls").value
-        eval_seconds = lib.getEvaluateSeconds()
-
-        share = (eval_seconds / wall * 100) if wall > 0 else 0
-        node_ratio = (eval_calls / minimax_calls * 100) if minimax_calls > 0 else 0
-        print(f"  {name}: wall={wall:.3f}s  evaluate_time={eval_seconds:.3f}s ({share:.1f}%)  "
-              f"evaluate_calls={eval_calls}  miniMax_nodes={minimax_calls} (leaf ratio {node_ratio:.1f}%)")
+        print(f"\n  {name}: wall={wall:.3f}s")
+        print(f"    {'function':<14}{'calls':>12}{'seconds':>10}{'share':>9}")
+        for fname, counter, getter in PROFILED:
+            calls = ctypes.c_longlong.in_dll(lib, counter).value
+            if getter:
+                sec = getattr(lib, getter)()
+                share = (sec / wall * 100) if wall > 0 else 0
+                print(f"    {fname:<14}{calls:>12}{sec:>10.4f}{share:>8.1f}%")
+            else:
+                print(f"    {fname:<14}{calls:>12}{'-':>10}{'-':>9}")
 
 
 if __name__ == "__main__":
@@ -188,7 +214,10 @@ if __name__ == "__main__":
     bench_repeated_position(baseline, "BASELINE")
     bench_repeated_position(optimized, "OPTIMIZED")
 
-    # Task 4 方案 B：量測 evaluate() 是否仍是瓶頸（需先編譯 ai_profiled.dll）
+    # 熱點量測（需先跑 gen_profiled.py 並編譯 ai_profiled.dll）
     import os
     if os.path.exists("./ai_profiled.dll"):
-        profile_evaluate_share("./ai_profiled.dll")
+        profile_hotspots("./ai_profiled.dll")
+    else:
+        print("\n(略過熱點量測：找不到 ai_profiled.dll，"
+              "先跑 python gen_profiled.py && gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c)")

@@ -43,3 +43,6 @@ b.txt
 wuziqi.py
 test.c
 test.exe
+
+# 由 src/_bench/gen_profiled.py 從 ai.c 生成，不入版控
+src/_bench/ai_profiled_core.generated.c

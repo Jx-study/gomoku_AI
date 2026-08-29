@@ -4,24 +4,21 @@
 
 ```
 gomoku_AI/
-├── src/                    # 當前穩定版本（推薦使用）
+├── src/                    # 主力開發目錄
 │   ├── Gomuko.py          # 主程式（圖形界面人機對戰）
 │   ├── ai.c               # C 語言 AI 引擎
-│   ├── ai.dll             # 編譯好的動態庫
-│   └── competition_chess.py  # 競賽版本
-├── project/               # 競賽實作開發歷史
-│   └── version 3/         # 最終競賽版本
-├── Player_Vs_Ai/          # 人機對戰開發歷史
-│   └── version_4/         # 最終人機版本
-├── archive/               # 歷史開發版本存檔
-│   ├── player_vs_ai/      # 人機對戰舊版本 (v1-v3)
-│   └── project/           # 競賽舊版本 (v1-v2)
-└── README.md
+│   ├── ai.dll             # 編譯後產生的動態庫（需自行編譯）
+│   └── competition_chess.py  # 競賽格式入口（OpenCV + 檔案 IPC）
+├── project/                # 競賽版本歷史（v1–v3，已由 src/ 取代）
+│   ├── readme.md          # 競賽版本演進說明
+│   └── version 3/         # 競賽最終版（與 GUI 版邏輯不同，檔案 IPC）
+└── Player_Vs_Ai/           # 人機對戰版本歷史（已由 src/ 取代）
+    └── version_4/         # 最終打包版（含 Gomuko.exe，可直接執行）
 ```
 
 ## 快速開始
 
-### 方式一：執行打包好的程式（推薦）
+### 方式一：執行打包好的程式
 1. 下載 `Player_Vs_Ai/version_4/Gomuko.exe`
 2. 雙擊運行即可開始遊戲
 
@@ -36,27 +33,26 @@ gcc -shared -o ai.dll -fPIC ai.c
 python Gomuko.py
 ```
 
+### 打包成可執行檔
+```bash
+cd src/
+pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." --hidden-import graphics Gomuko.py
+# 或使用預設 spec：
+pyinstaller Gomuko.spec
+```
+
 ## 專案介紹
 
-### 競賽版本 (project/)
-- **目標**：國立臺北科技大學·計算機程式設計（二）·五子棋專題競賽
-- **核心技術**：
-  - MiniMax 演算法 + Alpha-Beta 剪枝
-  - 符合 RIF 五子棋禁手規則（黑方三三、四四、長連禁手）
-  - 適配競賽格式（21×21 棋盤）
+### 人機對戰版本 (`src/`)
+- 圖形化遊戲界面（使用 graphics.py）
+- 滑鼠點擊落子、悔棋、重新開始、查看規則
+- AI 運算時間顯示、回合數提示
+- C 語言 AI 引擎（ctypes 呼叫）、Zobrist 哈希 + 置換表優化
 
-### 人機對戰版本 (Player_Vs_Ai/ & src/)
-- **功能特色**：
-  - 圖形化遊戲界面（使用 graphics.py）
-  - 鼠標點擊落子
-  - 悔棋、重新開始、查看規則
-  - AI 運算時間顯示
-  - 回合數提示
-- **核心技術**：
-  - C 語言 AI 引擎（ctypes 調用）
-  - Zobrist 哈希表 + 置換表優化
-  - MiniMax 演算法深度搜索（最大深度 7）
-  - 禁手規則檢測
+### 競賽版本 (`project/version 3/`)
+- **目標**：國立臺北科技大學·計算機程式設計（二）·五子棋專題競賽
+- 使用檔案 IPC（a.txt / b.txt）在兩個 process 間傳遞棋步
+- 符合 RIF 五子棋禁手規則（黑方三三、四四、長連禁手）
 
 ## 版本演進歷史
 
@@ -88,21 +84,10 @@ python Gomuko.py
 
 詳細規則：https://587.renju.org.tw/teach/teach018.htm
 
-## 技術細節
+## AI 技術細節
 
-### AI 演算法
-- **搜索策略**：MiniMax 演算法 + Alpha-Beta 剪枝
-- **優化技術**：
-  - Zobrist 哈希快速狀態編碼
-  - 置換表避免重複計算
-  - 移動排序提升剪枝效率
-- **搜索深度**：7 層（約 5 秒內完成）
-
-### 編譯與打包
-```bash
-# 編譯 C 動態庫
-gcc -shared -o ai.dll -fPIC ai.c
-
-# 打包成可執行檔
-pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." --hidden-import graphics Gomuko.py
-```
+- **搜索策略**：MiniMax 演算法 + Alpha-Beta 剪枝（深度 7，約 5 秒內完成）
+- **狀態快取**：Zobrist 哈希 + 置換表（10,000,003 桶）
+- **移動排序**：`sortMoves()` + `quickEvaluate()` 提升剪枝效率
+- **模式識別**：`checkLine()` 分類 14 種棋型（活三、死四、跳活三⋯）
+- **禁手檢測**：`checkUnValid()` 偵測黑方雙三/雙四/長連

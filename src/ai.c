@@ -113,92 +113,163 @@ void storeHashEntry(unsigned long long zobristKey, int depth, int score, char fl
     transpositionTable[index].bestY = (signed char)bestY;
 }
 
-// 通用的檢查連綫邏輯
-void checkConsecutive(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, int player, int *count, int *maxConnect, int *openEnds, int *gaps, int *op_num) {
-    int consecutiveEmpty = 0;
-    int max_count = 1;
+// 棋型查表：一條方向線的 11 格窗口（中心 + 左右各 5）換成棋型 index
+// 中心恆為 SELF 不入索引，周邊 10 格三態，出界的牆併入 OPP
+#define CELL_EMPTY 0
+#define CELL_SELF  1
+#define CELL_OPP   2   // 含出界的牆
+#define PATTERN_TABLE_SIZE 59049   // 3^10
 
-    for (int direction = -1; direction <= 1; direction += 2) {
-        if(max_count== 0)max_count++;
-        consecutiveEmpty = 0;
-        for (int j = 1; j < 6; j++) {
-            int nx = x + j * dx * direction;
-            int ny = y + j * dy * direction;
+static unsigned char patternTable[PATTERN_TABLE_SIZE];
 
-            if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {
-                if (board[ny][nx] == player) {
-                    (*count)++;
-                    max_count++;
-                    if (consecutiveEmpty != 0) {
-                        (*gaps)++;      // 中間有空格
-                        (*openEnds)--;
-                    }
-                    if (max_count > *maxConnect) *maxConnect = max_count;
-                    consecutiveEmpty = 0;
-                } else if (board[ny][nx] == 0) {
-                    consecutiveEmpty++;
-                    if (consecutiveEmpty == 1) {
-                        max_count = 0;
-                        (*openEnds)++;
-                    } else if (consecutiveEmpty >= 2) {
-                        max_count = *maxConnect;
-                        break;// 遇到liang次連續空位停止（可能有11001的情況）
-                    }
-                } else {
-                    if (consecutiveEmpty == 0) (*op_num)++;
-                    max_count = *maxConnect;
-                    break; // 遇到對手棋子停止計算
-                }
-            } else {
-                break; // 超出邊界停止計算
-            }
+// 把窗口編成 patternTable 索引：off 從 -5 到 +5 跳過中心，依序 idx = idx * 3 + cell
+// 編解碼順序必須一致，對應的解碼在 initPatternTable
+int encodeWindow(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, int player) {
+    int idx = 0;
+    for (int off = -5; off <= 5; off++) {
+        if (off == 0) continue;   // 中心不入索引
+        int nx = x + off * dx;
+        int ny = y + off * dy;
+        int cell;
+        if (nx < 0 || nx >= BOARD_MAX || ny < 0 || ny >= BOARD_MAX) {
+            cell = CELL_OPP;
+        } else if (board[ny][nx] == player) {
+            cell = CELL_SELF;
+        } else if (board[ny][nx] == 0) {
+            cell = CELL_EMPTY;
+        } else {
+            cell = CELL_OPP;   // 對方棋子（含第三方）
         }
+        idx = idx * 3 + cell;
+    }
+    return idx;
+}
+
+// 含中心的不間斷 SELF 長度
+static int solidRun(int cells[11]) {
+    int leftRun = 0, rightRun = 0;
+    for (int j = 1; j < 6 && cells[5 - j] == CELL_SELF; j++) leftRun++;
+    for (int j = 1; j < 6 && cells[5 + j] == CELL_SELF; j++) rightRun++;
+    return leftRun + 1 + rightRun;
+}
+
+// 是否存在一個含中心的 5 格區間全為 SELF
+static bool makesFive(int cells[11]) {
+    for (int start = 1; start <= 5; start++) {
+        bool all = true;
+        for (int k = 0; k < 5; k++) {
+            if (cells[start + k] != CELL_SELF) { all = false; break; }
+        }
+        if (all) return true;
+    }
+    return false;
+}
+
+// 四：能再加一子成五。回傳成五點的個數，兩個以上即活四
+static int fivePoints(int cells[11]) {
+    int n = 0;
+    for (int i = 0; i < 11; i++) {
+        if (cells[i] != CELL_EMPTY) continue;
+        cells[i] = CELL_SELF;
+        if (makesFive(cells)) n++;
+        cells[i] = CELL_EMPTY;
+    }
+    return n;
+}
+
+// 三：能再加一子成活四且不同時成五。回傳成活四的填法數，兩種以上即活三
+static int threePoints(int cells[11]) {
+    int n = 0;
+    for (int i = 0; i < 11; i++) {
+        if (cells[i] != CELL_EMPTY) continue;
+        cells[i] = CELL_SELF;
+        if (!makesFive(cells) && fivePoints(cells) >= 2) n++;
+        cells[i] = CELL_EMPTY;
+    }
+    return n;
+}
+
+// 二：RIF 未定義的殘留棋型，靠兩端是否被封區分活二與眠二
+// 只認實心二連，且兩端外側不得再有隔空的己方子（那屬於更強的棋型，已被前面分支處理）
+static int classifyMinor(int cells[11]) {
+    if (solidRun(cells) != 2) return 0;
+
+    int leftRun = 0;
+    for (int j = 1; j < 6 && cells[5 - j] == CELL_SELF; j++) leftRun++;
+    int left = 5 - leftRun - 1;              // 實連左端外一格
+    int right = left + 3;                    // 實連右端外一格
+
+    bool leftOpen = left >= 0 && cells[left] == CELL_EMPTY;
+    bool rightOpen = right < 11 && cells[right] == CELL_EMPTY;
+
+    // 端點外再一格若是己方子，掃描時算 gap，舊版不歸類為二
+    if (leftOpen && left - 1 >= 0 && cells[left - 1] == CELL_SELF) return 0;
+    if (rightOpen && right + 1 < 11 && cells[right + 1] == CELL_SELF) return 0;
+
+    if (leftOpen && rightOpen) return 2;     // 活二
+    if (leftOpen || rightOpen) return 6;     // 眠二
+    return 0;
+}
+
+// [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+/* 回傳中心（cells[5] 為 SELF）在此 11 格窗口形成的最強棋型 index，無棋型回傳 0 */
+int classifyWindow(int cells[11]) {
+    if (cells[5] != CELL_SELF) return 0;   // 建表恆為 SELF，這道防護給外部直接呼叫用
+
+    int run = solidRun(cells);
+    if (run >= 6) return 13;               // 長連
+    if (makesFive(cells)) return 5;        // 五連
+
+    // 四級與三級依 RIF 定義推導，牆與敵子都不是 EMPTY，成五點自然數不到
+    int fp = fivePoints(cells);
+    if (fp > 0) {
+        if (run == 4) return fp >= 2 ? 4 : 8;      // 活四、衝四
+        return fp >= 2 ? 10 : 12;                  // 跳活四、跳四
+    }
+
+    int tp = threePoints(cells);
+    if (tp > 0) {
+        if (run == 3) return tp >= 2 ? 3 : 7;      // 活三、眠三
+        return tp >= 2 ? 9 : 11;                   // 跳活三、跳三
+    }
+
+    return classifyMinor(cells);
+}
+
+// 全枚舉所有窗口編碼，逐一分類填進 patternTable
+void initPatternTable() {
+    for (int idx = 0; idx < PATTERN_TABLE_SIZE; idx++) {
+        int cells[11];
+        cells[5] = CELL_SELF;
+        int rem = idx;
+        // 解碼：off +5 是最低位，與 encodeWindow 反向
+        for (int off = 5; off >= -5; off--) {
+            if (off == 0) continue;
+            cells[5 + off] = rem % 3;
+            rem /= 3;
+        }
+        patternTable[idx] = (unsigned char)classifyWindow(cells);
     }
 }
 
 // 檢查該位置落子后的連綫數
+// 四個方向各查一次棋型表，命中的棋型 index 累加進 my_line
 void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
-    int dx[] = {1, 1, 0, -1}; // 水準、垂直、主對角線、副對角線的移動方向
+    // 首次呼叫時建表：checkUnValid 這條路徑不經過 aiRound，不能靠它初始化
+    // 與 findBestMove 初始化置換表同一個模式
+    static bool patternTableReady = false;
+    if (!patternTableReady) {
+        initPatternTable();
+        patternTableReady = true;
+    }
+
+    int dx[] = {1, 1, 0, -1};   // 水平、垂直、主對角線、副對角線
     int dy[] = {0, 1, 1, 1};
 
-    // 檢查四個方向
     for (int i = 0; i < 4; i++) {
-        int count = 1;  // 包含假設落子的這一個
-        int maxConnect = 0;   // 最大連綫數
-        int openEnds = 0; // 記錄連線的兩端是否開放
-        int op_num = 0; // 對手棋子數量
-        int gaps = 0; // 連綫中是否有空格
-        int max_count = 1;
-
-        checkConsecutive(board, x, y, dx[i], dy[i], player, &count, &maxConnect, &openEnds, &gaps, &op_num);
-
-        // Debug output
-        //printf("Direction %d: Count = %d, Max_c = %d, Open Ends = %d, op num = %d, gap = %d\n", i, count, maxConnect,openEnds, op_num, gaps);
-        // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-        // 判斷是否符合條件
-        // 特殊情況優先處理，例如 "X01112"或是"011X10"
-        if(gaps == 1){
-            if (op_num == 0){
-                if(count == 3 && maxConnect == 2 )my_line[9]++;     // 10110
-                if(count == 4 && maxConnect == 3)my_line[10]++;     // 10111...
-            }
-            else if (op_num == 1){
-                if(count == 3 && maxConnect >=1)my_line[11]++;      // 21011  | 210101
-                if(count == 4 && maxConnect >= 2)my_line[12]++;     // 210111 | 211011
-            }
-        }else if(gaps == 2){         
-            if (op_num == 0){
-                if(count == 3 && maxConnect >= 1 )my_line[9]++;     // 10011 | 10101
-            }
-        }else if(gaps == 0) {
-            if (maxConnect > 5) my_line[13]++;     // 長連
-            else if (count == 5 && gaps == 0) my_line[5]++;     // 五连
-            else if (openEnds == 1 && op_num == 1 && maxConnect == 2)my_line[6]++;  // 眠二
-            else if (openEnds == 1 && op_num == 1 && maxConnect == 3)my_line[7]++;  // 眠三
-            else if (openEnds == 1 && op_num == 1&& maxConnect == 4)my_line[8]++;  // 衝四
-            else if (openEnds > 1 && maxConnect >= 2)my_line[maxConnect]++;  // 活二、活三、活四
-
-        }
+        int idx = encodeWindow(board, x, y, dx[i], dy[i], player);
+        int code = patternTable[idx];
+        if (code) my_line[code]++;
     }
 }
 
@@ -214,7 +285,7 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
 }
 
 // 落子後通過該點的最長連續棋子數；hasFive 回報是否有任一方向恰好五連
-// 勝負與長連只看連續長度，checkLine 的分類對分裂形狀會漏判
+// 勝負與長連只看連續長度，不經過棋型分類
 // 兩者分開回報：五連與長連可能同時出現在不同方向，只看最長值會誤判黑棋禁手
 int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *hasFive) {
     int dx[] = {1, 1, 0, -1};
@@ -278,8 +349,8 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int my_line[14] = {0}, op_line[14] = {0}; // 该位置落子后，自己和对手的连线数
 
-    // 成五直接給最高分：checkLine 對分裂形狀（隔格成五）會分類成全零
-    // 與 judgeMove/maxRunAt 共用同一套判定，避免這類點被 score != 0 濾掉
+    // 成五直接給最高分，與 judgeMove/maxRunAt 共用同一套判定
+    // 勝著不必再經棋型分類，也避免這類點被 score != 0 濾掉
     if (judgeMove(board, x, y, player) == 2) return 2000000;
 
     // 更新

@@ -5,6 +5,12 @@
 
 `*.dll` 被 `.gitignore` 排除，所以本目錄只有原始碼與腳本；要跑之前得先自己編譯出對照用的 dll。
 
+目前本目錄實際留著的只有 `ai_v2_0.dll`（查表化之前）與 `ai_v3_0.dll`（查表化之後、增量索引
+之前），加上 `../ai.dll`（現行版）。`ai_baseline.dll`、`ai_optimized.dll`、`ai_profiled.dll`、
+`new.dll` 都已刪除——下面幾個工具的參數預設值仍寫著這些檔名，都是**過期的預設值**，直接照抄
+指令會撲空，路徑要自己指定成 `ai_v2_0.dll` 或 `ai_v3_0.dll`。`ai_profiled.dll` 不是刪掉不管，
+是本來就該用時再生成（見下方「熱點量測」）。
+
 **除非另有註明，本文件的指令都在 `src/_bench/` 底下執行**（`pytest` 是例外，見下）。
 文中的 `ai.c` 一律指引擎原始碼 `../ai.c`；`git show` 那類指令的路徑則是 repo 相對。
 
@@ -32,6 +38,7 @@ gcc -shared -o old.dll -fPIC old.c
 | `benchmark_ai.py` | 對照腳本，另含 `profile_hotspots()` 熱點量測（需 `ai_profiled.dll`） |
 | `gen_profiled.py` | 從 `ai.c` 生成插樁用的中間檔。編譯 `ai_profiled.dll` 前必須先跑 |
 | `count_cells.py` | 量 `checkLine` 每次讀取幾個盤面格。確定性指標，重跑結果相同 |
+| `count_updates.py` | 量搜索中「落子/撤銷次數」對「`checkLine` 呼叫次數」的比例，確定性指標 |
 | `ai_profiled.c` | wrapper 層：計數器與計時，`#include` 生成檔。不含引擎邏輯的複本 |
 
 Zobrist 的正確性改由 pytest 涵蓋：`../tests/test_zobrist.py`（key 的位元熵、逐手 XOR 與整盤
@@ -43,16 +50,19 @@ Python 端逐手同步 `updateZobristKey` 的情境，該同步已經移除，�
 以下都在 `src/_bench/` 執行：
 
 ```bash
-python ab_fresh.py <baseline.dll> [<new.dll>]   # new 預設 ../ai.dll
-python ab.py       <baseline.dll> [<new.dll>]
+python ab_fresh.py <baseline.dll> [<new.dll>]   # new 預設 ../ai.dll；baseline 預設 ./ai_baseline.dll，已不存在，務必自己指定
+python ab.py       <baseline.dll> [<new.dll>]   # 同上
+
+# 例：拿現存的 ai_v3_0.dll 當基準比對現行 ../ai.dll
+python ab_fresh.py ./ai_v3_0.dll
 
 # 熱點量測（判斷瓶頸在哪個函數）
 python gen_profiled.py                                  # 改完 ai.c 要重跑
-gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c
-python benchmark_ai.py <baseline.dll> [<new.dll>]
+gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c       # 這顆是生成物，本目錄預設沒有
+python benchmark_ai.py <baseline.dll> [<optimized.dll>] # 兩個參數都預設指向已刪除的 ai_*.dll，務必自己指定
 
 # 棋力對比（改動會改變走法時用這個，不是 ab_fresh.py）
-cp ../ai.dll ./new.dll                 # 兩個路徑必須是不同檔案
+cp ../ai.dll ./new.dll                 # 兩個路徑必須是不同檔案（new.dll 用完可刪，不留版控）
 python selfplay.py ./old.dll ./new.dll
 
 # 確定性的效能指標（改動涉及掃描方式時用這個，不是計時）

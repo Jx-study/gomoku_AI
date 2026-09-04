@@ -2,7 +2,7 @@
 
 `checkLine` 單次只有幾十奈秒，計時會被 CPU 頻率、排程、背景程序蓋過；存取格數跑幾次都一樣，
 而且直接對應改動的本質：逐格掃描遇對手子或連續兩空格就 break，查表版每方向必須掃滿 10 格
-才能得到索引。
+才能得到索引，索引版（`idxValid` 分支）改成直接讀 `windowIdx`，每方向只需一次陣列存取。
 
 做法與 gen_profiled.py 同一套路：讀 ai.c，只在盤面存取處插一個計數器，ai.c 本身不修改，
 每次執行重新生成。
@@ -33,17 +33,26 @@ PROBES = [
     ("逐格掃描",
      "if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {",
      "if (nx >= 0 && nx < (BOARD_MAX) && ny >= 0 && ny < (BOARD_MAX)) {\n                cells_read++;"),
+    # 索引版 checkLine：idxValid 為真時查 windowIdx，是四次陣列存取而非盤面讀取，
+    # 但用同一個計數器才能跟前兩版擺在同一張表比。放 encodeWindow 前面：
+    # idxValid 為真的原始碼同時含兩個探針位置，windowIdx 那支要先比對到。
+    ("索引",
+     "int idx = idxValid ? windowIdx[player - 1][y][x][i]",
+     "cells_read++; int idx = idxValid ? windowIdx[player - 1][y][x][i]"),
     # 查表版 encodeWindow：中心以外每一格都要讀（出界也要判斷）
     ("查表",
      "        if (off == 0) continue;   // 中心不入索引",
      "        if (off == 0) continue;   // 中心不入索引\n        cells_read++;"),
 ]
 
+# idxValid 版需要額外把索引填好、開關打開，才會真的走 windowIdx 分支；
+# 沒有這段符號的舊版原始碼保持原本的 DRIVER，兩者用 %(setup)s 共用同一個框架
 DRIVER = r"""
 #include <stdio.h>
 long cells_read = 0;
 void checkLine(int b[%(bm)d][%(bm)d], int x, int y, int p, int ml[14]);
 static int board[%(bm)d][%(bm)d];
+%(idx_protos)s
 
 int main(void) {
     /* 固定種子鋪子：兩版看到完全相同的盤面，差異才只來自實作 */
@@ -56,6 +65,7 @@ int main(void) {
     }
     int warm[14] = {0};
     checkLine(board, %(mid)d, %(mid)d, 1, warm);   /* 查表版首次呼叫要建表，不計入 */
+    %(idx_setup)s
 
     cells_read = 0;
     int calls = 0;
@@ -70,6 +80,15 @@ int main(void) {
     return 0;
 }
 """
+
+# idxValid 分支要被走到才量得出「索引」而非「查表」：rebuild 一次、把旗標打開。
+# 兩個符號在插樁前的原始碼裡是 static，這裡用同名宣告覆蓋連結可見度（跟
+# gen_profiled.py 改名手法同源：不碰 ai.c 本身，只在生成的中間檔動宣告）。
+IDX_PROTOS = (
+    "extern _Bool idxValid;\n"
+    "void rebuildWindowIndex(int b[%(bm)d][%(bm)d]);\n"
+)
+IDX_SETUP = "rebuildWindowIndex(board); idxValid = 1;"
 
 
 def board_max(src):
@@ -90,6 +109,14 @@ def instrument(src, label):
             break
     if kind is None:
         sys.exit("count_cells: %s 找不到任何盤面存取點——探針要跟著 ai.c 更新。" % label)
+    if kind == "索引":
+        # 驅動程式要能從外部打開 idxValid、呼叫 rebuildWindowIndex，
+        # 兩者在 ai.c 裡是 static——只在這份中間檔拿掉，ai.c 本身不動
+        out, n1 = re.subn(r"^static bool idxValid", "bool idxValid", out, count=1, flags=re.M)
+        out, n2 = re.subn(r"^static void rebuildWindowIndex", "void rebuildWindowIndex", out, count=1, flags=re.M)
+        if n1 != 1 or n2 != 1:
+            sys.exit("count_cells: %s 找不到 idxValid/rebuildWindowIndex 的宣告——"
+                     "驅動程式的外部連結假設可能過期了。" % label)
     return "extern long cells_read;\n" + out, kind
 
 
@@ -104,9 +131,12 @@ def measure(src_path, stones, workdir):
     with open(core, "w", encoding="utf-8") as f:
         f.write(instrumented)
 
+    idx_protos = IDX_PROTOS % {"bm": bm} if kind == "索引" else ""
+    idx_setup = IDX_SETUP if kind == "索引" else ""
     drv = os.path.join(workdir, "drv.c")
     with open(drv, "w", encoding="utf-8") as f:
-        f.write(DRIVER % {"bm": bm, "stones": stones, "mid": bm // 2})
+        f.write(DRIVER % {"bm": bm, "stones": stones, "mid": bm // 2,
+                          "idx_protos": idx_protos, "idx_setup": idx_setup})
 
     exe = os.path.join(workdir, "probe.exe")
     build = subprocess.run(["gcc", "-O2", "-o", exe, drv, core],

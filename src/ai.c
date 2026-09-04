@@ -801,9 +801,9 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
         // 遍历棋盘寻找符合策略的走法
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
-                // 跳过无效位置
-                if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+                // 跳过无效位置；便宜的條件先過濾，禁手判定要掃線
                 if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+                if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
 
                 // 检查位置的棋型
                 int line[14] = {0};
@@ -849,9 +849,9 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     // 若無適用策略：通用走法评估
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
-            // 跳过无效位置
-            if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+            // 跳过无效位置；便宜的條件先過濾，禁手判定要掃線
             if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+            if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
 
             // 快速评估位置价值
             int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);

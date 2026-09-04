@@ -3,7 +3,7 @@
 用法:
     python selfplay.py <dllA> <dllB> [games=20] [--quiet]
 
-注意: dllA/dllB 必須是**不同檔案路徑**——ctypes 對同一路徑回傳同一個已載入
+注意: dllA/dllB 必須是不同檔案路徑。ctypes 對同一路徑回傳同一個已載入
 模組，兩個「引擎」會共用同一份 transpositionTable / currentZobristKey。
 比較同一份 dll 的兩個複本時，先各自 copy 成不同檔名。
 
@@ -22,7 +22,7 @@ import sys
 #
 # 為什麼開局池要夠大：引擎是**確定性**的（Zobrist 種子固定、每局開始清空置換表，
 # 白棋第2手的 srand(time(NULL)) 分支又被腳本化開局繞過），所以同一個開局永遠打出
-# 同一盤棋。games 開超過 2 × 開局數只是把同樣的對局重播一次，勝率不會變得更可信——
+# 同一盤棋。games 開超過 2 × 開局數只是把同樣的對局重播一次，勝率不會變得更可信；
 # 要提高統計解析度只能加開局，不能加局數。
 #
 # 座標來自 RIF 官方開局形（openings_rif.py，含轉錄正確性驗證），104 組 = 208 局滿配對。
@@ -85,7 +85,7 @@ def judge(board, x, y, p):
 
     注意：這是 Python 端的獨立判定，與 C 端 checkUnValid 是兩份實作。
     禁手判負的局會被記錄下來（見 main 的 fouls 統計），建議抽樣人工複核
-    兩邊判定是否一致——不一致會產生假性敗局、污染勝率。
+    兩邊判定是否一致。不一致會產生假性敗局，污染勝率。
     """
     for dx, dy in ((1, 0), (0, 1), (1, 1), (1, -1)):
         n = line_len(board, x, y, dx, dy, p)

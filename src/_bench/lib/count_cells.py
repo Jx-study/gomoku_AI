@@ -1,4 +1,4 @@
-"""量 `checkLine` 每次呼叫讀取幾個盤面格——確定性的效能代理指標。
+"""量 checkLine 每次呼叫讀取幾個盤面格，確定性的效能代理指標。
 
 `checkLine` 單次只有幾十奈秒，計時會被 CPU 頻率、排程、背景程序蓋過；存取格數跑幾次都一樣，
 而且直接對應改動的本質：逐格掃描遇對手子或連續兩空格就 break，查表版每方向必須掃滿 10 格
@@ -8,8 +8,8 @@
 每次執行重新生成。
 
 用法（在 src/_bench/ 下）：
-    python count_cells.py old.c [new.c]        # new 預設 ../ai.c
-    python count_cells.py                      # 基準預設 HEAD:src/ai.c
+    python bench.py cells old.c [new.c]        # new 預設 ../ai.c
+    python bench.py cells                      # 基準預設 HEAD:src/ai.c
 
 基準要選「只差你這一項」的版本（見 README 陷阱 2）；兩版若是同一種實作，比值恆為 1.00x。
 """
@@ -20,9 +20,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_NEW = os.path.join(HERE, "..", "ai.c")
+ROOT = os.path.dirname(HERE)                       # src/_bench/
+DEFAULT_NEW = os.path.join(ROOT, "..", "ai.c")
 # 中間檔放本目錄而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
-WORKDIR = os.path.join(HERE, "_count_cells_tmp")
+WORKDIR = os.path.join(ROOT, "_count_cells_tmp")
 
 # 涵蓋開局到中盤：掃描版的存取量隨密度上升，查表版恆定，比值要看區間而非單點
 STONE_COUNTS = [8, 18, 50, 80]
@@ -94,7 +95,7 @@ IDX_SETUP = "rebuildWindowIndex(board); idxValid = 1;"
 def board_max(src):
     m = re.search(r"^#define\s+BOARD_MAX\s+(\d+)", src, re.M)
     if not m:
-        sys.exit("count_cells: ai.c 抽不到 BOARD_MAX——定義格式可能改了。")
+        sys.exit("count_cells: ai.c 抽不到 BOARD_MAX，定義格式可能改了。")
     return int(m.group(1))
 
 
@@ -108,14 +109,14 @@ def instrument(src, label):
             kind = name
             break
     if kind is None:
-        sys.exit("count_cells: %s 找不到任何盤面存取點——探針要跟著 ai.c 更新。" % label)
+        sys.exit("count_cells: %s 找不到任何盤面存取點，探針要跟著 ai.c 更新。" % label)
     if kind == "索引":
         # 驅動程式要能從外部打開 idxValid、呼叫 rebuildWindowIndex，
-        # 兩者在 ai.c 裡是 static——只在這份中間檔拿掉，ai.c 本身不動
+        # 兩者在 ai.c 裡是 static，只在這份中間檔拿掉，ai.c 本身不動
         out, n1 = re.subn(r"^static bool idxValid", "bool idxValid", out, count=1, flags=re.M)
         out, n2 = re.subn(r"^static void rebuildWindowIndex", "void rebuildWindowIndex", out, count=1, flags=re.M)
         if n1 != 1 or n2 != 1:
-            sys.exit("count_cells: %s 找不到 idxValid/rebuildWindowIndex 的宣告——"
+            sys.exit("count_cells: %s 找不到 idxValid/rebuildWindowIndex 的宣告，"
                      "驅動程式的外部連結假設可能過期了。" % label)
     return "extern long cells_read;\n" + out, kind
 
@@ -187,9 +188,9 @@ def main():
             print("%-6d %12.2f %12.2f %8s" % (stones, o, n, ratio))
 
         print("\nbefore = %s（%s）" % (old_label, old_kind))
-        print("after  = %s（%s）" % (os.path.relpath(new_src, HERE), new_kind))
+        print("after  = %s（%s）" % (os.path.relpath(new_src, ROOT), new_kind))
         if old_kind == new_kind:
-            print("\n警告：兩版是同一種實作，比值恆為 1.00x——基準選錯了。"
+            print("\n警告：兩版是同一種實作，比值恆為 1.00x，基準選錯了。"
                   "要挑實作真的不同的版本，見 README 陷阱 2。")
     finally:
         shutil.rmtree(WORKDIR, ignore_errors=True)

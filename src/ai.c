@@ -145,6 +145,75 @@ int encodeWindow(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, 
     return idx;
 }
 
+// 增量索引：[視角][y][x][方向] -> 該格為中心、該方向的 encodeWindow 結果
+// 視角 p 對應玩家 p+1；牆在 rebuild 時就編進初值，增量更新不碰牆
+static int windowIdx[2][BOARD_MAX][BOARD_MAX][4];
+
+// windowIdx 是否可信；只在 findBestMove/vcfProbe 的搜索期間為真
+// checkUnValid 這條路徑不經過搜索入口，索引可能是舊局面甚至全零，靠這個旗標退回 encodeWindow
+static bool idxValid = false;
+
+// 3 的次方表，POW3[e] = 3^e，e 對應 weightExp 算出的位權指數
+static const int POW3[10] = {1, 3, 9, 27, 81, 243, 729, 2187, 6561, 19683};
+
+// off 對應 encodeWindow 索引裡的位權指數：off<0 -> 4-off，off>0 -> 5-off
+static int weightExp(int off) {
+    return (off < 0) ? (4 - off) : (5 - off);
+}
+
+// 全盤重算 windowIdx，掛在搜索入口，不依賴逐手同步
+static void rebuildWindowIndex(int board[BOARD_MAX][BOARD_MAX]) {
+    int dx[] = {1, 1, 0, -1};
+    int dy[] = {0, 1, 1, 1};
+    for (int p = 0; p < 2; p++) {
+        for (int y = 0; y < BOARD_MAX; y++) {
+            for (int x = 0; x < BOARD_MAX; x++) {
+                for (int d = 0; d < 4; d++) {
+                    windowIdx[p][y][x][d] = encodeWindow(board, x, y, dx[d], dy[d], p + 1);
+                }
+            }
+        }
+    }
+}
+
+// 落子/撤銷在鄰格窗口造成的增量修正，delta 為 +1/-1（落子/撤銷）
+// 一次修正雙視角：該子對自己是 SELF、對對手是 OPP，權重分別是 delta 與 2*delta
+static void adjustWindowIndex(int x, int y, int player, int delta) {
+    int dx[] = {1, 1, 0, -1};
+    int dy[] = {0, 1, 1, 1};
+    int selfPlane = player - 1;
+    int oppPlane = 2 - player;
+    for (int d = 0; d < 4; d++) {
+        for (int off = -5; off <= 5; off++) {
+            if (off == 0) continue;
+            int nx = x + off * dx[d];
+            int ny = y + off * dy[d];
+            if (nx < 0 || nx >= BOARD_MAX || ny < 0 || ny >= BOARD_MAX) continue;   // 牆不參與增量
+            int w = POW3[weightExp(-off)];
+            windowIdx[selfPlane][ny][nx][d] += delta * w;        // 己方視角：EMPTY -> SELF
+            windowIdx[oppPlane][ny][nx][d]  += 2 * delta * w;    // 敵方視角：EMPTY -> OPP
+        }
+    }
+}
+
+#ifdef WINDOW_IDX_CHECK
+#include <assert.h>
+// debug build 專用：增量結果必須等於當場重算，掛在 placeStone/removeStone 之後
+static void checkWindowIndex(int board[BOARD_MAX][BOARD_MAX]) {
+    int dx[] = {1, 1, 0, -1};
+    int dy[] = {0, 1, 1, 1};
+    for (int p = 0; p < 2; p++) {
+        for (int y = 0; y < BOARD_MAX; y++) {
+            for (int x = 0; x < BOARD_MAX; x++) {
+                for (int d = 0; d < 4; d++) {
+                    assert(windowIdx[p][y][x][d] == encodeWindow(board, x, y, dx[d], dy[d], p + 1));
+                }
+            }
+        }
+    }
+}
+#endif
+
 // 含中心的不間斷 SELF 長度
 static int solidRun(int cells[11]) {
     int leftRun = 0, rightRun = 0;
@@ -267,7 +336,8 @@ void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my
     int dy[] = {0, 1, 1, 1};
 
     for (int i = 0; i < 4; i++) {
-        int idx = encodeWindow(board, x, y, dx[i], dy[i], player);
+        int idx = idxValid ? windowIdx[player - 1][y][x][i]
+                            : encodeWindow(board, x, y, dx[i], dy[i], player);
         int code = patternTable[idx];
         if (code) my_line[code]++;
     }
@@ -583,6 +653,25 @@ static int listFourMoves(int board[BOARD_MAX][BOARD_MAX], int player, Move *move
     return n;
 }
 
+// 落子單一入口，賦值後同步增量修正 windowIdx，不動 Zobrist key
+static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
+    board[y][x] = player;
+    adjustWindowIndex(x, y, player, 1);
+#ifdef WINDOW_IDX_CHECK
+    checkWindowIndex(board);
+#endif
+}
+
+// 撤銷單一入口，對稱於 placeStone；落子色從盤面現值讀出，呼叫端不必多帶參數
+static void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
+    int player = board[y][x];
+    adjustWindowIndex(x, y, player, -1);
+    board[y][x] = 0;
+#ifdef WINDOW_IDX_CHECK
+    checkWindowIndex(board);
+#endif
+}
+
 // attacker 是否有連續衝四強制勝；是則回傳 1 並寫入首手 *wx,*wy
 static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
                      int minX, int maxX, int minY, int maxY, int *wx, int *wy) {
@@ -600,32 +689,32 @@ static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
             return 1;
         }
 
-        board[y][x] = attacker;
+        placeStone(board, x, y, attacker);
         int pts[VCF_MAX_FIVE_PTS][2];
         int atkN = listFivePoints(board, attacker, minX, maxX, minY, maxY, pts, VCF_MAX_FIVE_PTS);
-        if (atkN == 0) { board[y][x] = 0; continue; }  // 沒造成成五威脅 -> 不具強制性
+        if (atkN == 0) { removeStone(board, x, y); continue; }  // 沒造成成五威脅 -> 不具強制性
 
         // 守方當下已能成五：他搶先落子就贏了，攻方的衝四救不回來
         int defPts[VCF_MAX_FIVE_PTS][2];
         if (listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS) > 0) {
-            board[y][x] = 0;
+            removeStone(board, x, y);
             continue;
         }
 
         if (atkN >= 2) {   // 活四：守方擋一點，攻方下另一點即成五
-            board[y][x] = 0;
+            removeStone(board, x, y);
             *wx = x; *wy = y;
             return 1;
         }
 
         int bx = pts[0][0], by = pts[0][1];   // 衝四：守方唯一擋點
         if (judgeMove(board, bx, by, defender) < 0) {   // 守方是黑棋且該點是禁手 -> 擋不了
-            board[y][x] = 0;
+            removeStone(board, x, y);
             *wx = x; *wy = y;
             return 1;
         }
 
-        board[by][bx] = defender;
+        placeStone(board, bx, by, defender);
         // 反四：守方的擋子同時做出自己的四，攻方必須回應，保守放棄此線
         int counterFour = listFivePoints(board, defender, minX, maxX, minY, maxY, defPts, VCF_MAX_FIVE_PTS);
         int win = 0;
@@ -633,8 +722,8 @@ static int vcfSearch(int board[BOARD_MAX][BOARD_MAX], int attacker, int ply,
             int nx, ny;
             win = vcfSearch(board, attacker, ply + 2, minX, maxX, minY, maxY, &nx, &ny);
         }
-        board[by][bx] = 0;
-        board[y][x] = 0;
+        removeStone(board, bx, by);
+        removeStone(board, x, y);
 
         if (win) { *wx = x; *wy = y; return 1; }
     }
@@ -865,7 +954,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
     int bestMx = moves[0].x, bestMy = moves[0].y;
     for (int i = 0; i <count; i++) {
         int x = moves[i].x, y = moves[i].y;
-        board[y][x] = currentPlayer;
+        placeStone(board, x, y, currentPlayer);
         updateZobristKey(x, y, currentPlayer);// 更新雜湊值
         // 遞迴呼叫 miniMax，切換到對手回合
         if (isMaximizing) {
@@ -880,7 +969,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
             beta = (bestScore < beta) ? bestScore : beta;
         }
         // 撤銷移動
-        board[y][x] = 0;
+        removeStone(board, x, y);
         updateZobristKey(x, y, currentPlayer); // 還原雜湊值
 
         // Alpha-Beta 剪枝
@@ -902,7 +991,7 @@ int miniMax(int board[BOARD_MAX][BOARD_MAX], int depth, bool isMaximizing, int c
 }
 
 // 找最佳落子（迭代加深：從深度 1 逐層加深，每層用上一層的最佳走法改善排序）
-void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
+static void findBestMoveImpl(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
     static bool ttInitialized = false;
     if (!ttInitialized) {
         initTranspositionTable();
@@ -910,6 +999,7 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
     }
     // 每次搜索前以實際盤面重算，key 為絕對值——不依賴外部呼叫方逐手同步
     currentZobristKey = computeZobristKey(board);
+    rebuildWindowIndex(board);
     int moveCount = 0;
 
     int maxDepth = MAX_DEPTH + (ai == 1 ? 1 : 0);
@@ -938,11 +1028,11 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         int alpha = INT_MIN;
         for (int i = 0; i < count; i++) {
             int x = moves[i].x, y = moves[i].y;
-            board[y][x] = ai;
+            placeStone(board, x, y, ai);
             updateZobristKey(x,y,ai);
             int score = miniMax(board, d-1, false, 3 - ai, ai, alpha, INT_MAX, minX, maxX, minY, maxY);
             updateZobristKey(x,y,ai);
-            board[y][x] = 0;
+            removeStone(board, x, y);
 
             //printf("d=%d %d(x:%d,y:%d)--->%d\n",d,score,x,y,moves[i].score);
             if (score > bestScore) {
@@ -960,6 +1050,14 @@ void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int a
         // 已找到必勝走法，不需要再加深
         if (bestScore >= 10000000) break;
     }
+}
+
+// 對外入口：只在這裡開關 idxValid，保證有效期不跨越回 Python 的邊界
+// 用包裝函式而非在 Impl 每個 return 前設偽，改動內部提前返回時不會漏設
+void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
+    idxValid = true;
+    findBestMoveImpl(board, bestX, bestY, ai, minX, maxX, minY, maxY, roundCounter);
+    idxValid = false;
 }
 
 // 計算當前棋局的最小和最大邊界
@@ -988,10 +1086,19 @@ void getBounds(int board[BOARD_MAX][BOARD_MAX], int *minX, int *maxX, int *minY,
 }
 
 // 測試用入口：自行算邊界後跑算殺，不必隔著 aiRound 驗證 VCF
-int vcfProbe(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
+static int vcfProbeImpl(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
     int minX, maxX, minY, maxY;
     getBounds(board, &minX, &maxX, &minY, &maxY);
+    rebuildWindowIndex(board);
     return vcfFindWin(board, attacker, minX, maxX, minY, maxY, wx, wy);
+}
+
+// 對外入口：同 findBestMove，包裝函式集中管理 idxValid 的開關與清除
+int vcfProbe(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
+    idxValid = true;
+    int found = vcfProbeImpl(board, attacker, wx, wy);
+    idxValid = false;
+    return found;
 }
 
 // AI回合

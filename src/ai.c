@@ -196,6 +196,42 @@ static void adjustWindowIndex(int x, int y, int player, int delta) {
     }
 }
 
+// stoneList[p]：玩家 p+1 的所有棋子座標，以 y * BOARD_MAX + x 存；stoneCount[p] 是長度
+// 用 short 而非 unsigned char：BOARD_MAX 改大到 16 以上時 y*BOARD_MAX+x 會超過 255
+static short stoneList[2][BOARD_MAX * BOARD_MAX];
+static int stoneCount[2];
+
+// 全盤重算 stoneList，掛在搜索入口，不依賴逐手同步
+static void rebuildStoneList(int board[BOARD_MAX][BOARD_MAX]) {
+    stoneCount[0] = 0;
+    stoneCount[1] = 0;
+    for (int y = 0; y < BOARD_MAX; y++) {
+        for (int x = 0; x < BOARD_MAX; x++) {
+            int p = board[y][x] - 1;
+            if (p == 0 || p == 1) stoneList[p][stoneCount[p]++] = (short)(y * BOARD_MAX + x);
+        }
+    }
+}
+
+// 落子在 stoneList 造成的增量修正：附加一筆
+static void addStone(int x, int y, int player) {
+    int p = player - 1;
+    stoneList[p][stoneCount[p]++] = (short)(y * BOARD_MAX + x);
+}
+
+// 撤銷在 stoneList 造成的增量修正：線性搜尋該筆、與最後一筆對調再縮短
+// 不假設 pop-back 成立——搜索確實是 LIFO，但那是隱性不變量；線性搜尋每次只掃一色的十來筆，成本可忽略
+static void dropStone(int x, int y, int player) {
+    int p = player - 1;
+    short target = (short)(y * BOARD_MAX + x);
+    for (int i = 0; i < stoneCount[p]; i++) {
+        if (stoneList[p][i] == target) {
+            stoneList[p][i] = stoneList[p][--stoneCount[p]];
+            return;
+        }
+    }
+}
+
 #ifdef WINDOW_IDX_CHECK
 #include <assert.h>
 // debug build 專用：增量結果必須等於當場重算，掛在 placeStone/removeStone 之後
@@ -262,6 +298,26 @@ static void checkNeighborCount(int board[BOARD_MAX][BOARD_MAX]) {
             }
             assert(neighborCount[y][x] == (unsigned char)count);
         }
+    }
+}
+
+// debug build 專用：stoneList 當場重掃棋盤，比對兩邊的集合（不計順序）
+static void checkStoneList(int board[BOARD_MAX][BOARD_MAX]) {
+    for (int p = 0; p < 2; p++) {
+        int count = 0;
+        for (int y = 0; y < BOARD_MAX; y++) {
+            for (int x = 0; x < BOARD_MAX; x++) {
+                if (board[y][x] != p + 1) continue;
+                count++;
+                short cell = (short)(y * BOARD_MAX + x);
+                bool found = false;
+                for (int i = 0; i < stoneCount[p]; i++) {
+                    if (stoneList[p][i] == cell) { found = true; break; }
+                }
+                assert(found);
+            }
+        }
+        assert(count == stoneCount[p]);
     }
 }
 #endif
@@ -400,7 +456,21 @@ void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my
 }
 
 // 計算棋盤自己和對手的縂連綫數量
+// 搜索期間每顆棋子必落在 box 內，box 篩不掉任何一顆，idxValid 時改走 stoneList，
+// 掃描路徑留給 checkUnValid 從 Python 進來的冷路徑（idxValid 為 false）
 void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {
+    if (idxValid) {
+        int p = player - 1;
+        for (int i = 0; i < stoneCount[p]; i++) {
+#ifdef WINDOW_IDX_CHECK
+            int x = stoneList[p][i] % BOARD_MAX, y = stoneList[p][i] / BOARD_MAX;
+            assert(minX <= x && x <= maxX && minY <= y && y <= maxY);
+#endif
+            checkLine(board, stoneList[p][i] % BOARD_MAX, stoneList[p][i] / BOARD_MAX, player, my_now);
+        }
+        return;
+    }
+
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
             if (board[y][x] == player) {
@@ -729,9 +799,11 @@ static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player
     board[y][x] = player;
     adjustWindowIndex(x, y, player, 1);
     adjustNeighborCount(x, y, 1);
+    addStone(x, y, player);
 #ifdef WINDOW_IDX_CHECK
     checkWindowIndex(board);
     checkNeighborCount(board);
+    checkStoneList(board);
 #endif
 }
 
@@ -740,10 +812,12 @@ static void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
     int player = board[y][x];
     adjustWindowIndex(x, y, player, -1);
     adjustNeighborCount(x, y, -1);
+    dropStone(x, y, player);
     board[y][x] = 0;
 #ifdef WINDOW_IDX_CHECK
     checkWindowIndex(board);
     checkNeighborCount(board);
+    checkStoneList(board);
 #endif
 }
 
@@ -1076,6 +1150,7 @@ static void findBestMoveImpl(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *b
     currentZobristKey = computeZobristKey(board);
     rebuildWindowIndex(board);
     rebuildNeighborCount(board);
+    rebuildStoneList(board);
     int moveCount = 0;
 
     int maxDepth = MAX_DEPTH + (ai == 1 ? 1 : 0);
@@ -1167,6 +1242,7 @@ static int vcfProbeImpl(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, 
     getBounds(board, &minX, &maxX, &minY, &maxY);
     rebuildWindowIndex(board);
     rebuildNeighborCount(board);
+    rebuildStoneList(board);
     return vcfFindWin(board, attacker, minX, maxX, minY, maxY, wx, wy);
 }
 

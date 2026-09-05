@@ -92,6 +92,10 @@ PROBES = [
     ("            if (board[y][x] == player) {",
      "            g_cn_cells++;\n"
      "            if (board[y][x] == player) { g_cn_hits++;"),
+    # checkNow 快速路徑：棋子清單走訪次數，語意與 g_cn_cells 對稱（一次走訪＝一次讀取）
+    ("            checkLine(board, stoneList[p][i] % BOARD_MAX, stoneList[p][i] / BOARD_MAX, player, my_now);",
+     "            g_sl_iter++;\n"
+     "            checkLine(board, stoneList[p][i] % BOARD_MAX, stoneList[p][i] / BOARD_MAX, player, my_now);"),
     # 落子/撤銷單一入口
     ("static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
      "static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
@@ -111,7 +115,7 @@ EXPECTED_CAND_LOOPS = 5
 COUNTERS = ["g_adj_calls", "g_adj_cells", "g_adj_hits", "g_run_calls", "g_run_cells",
             "g_checkline", "g_wins_calls", "g_judge_calls", "g_judge_deep",
             "g_eg_forbid", "g_eg_five", "g_placements",
-            "g_cn_calls", "g_cn_cells", "g_cn_hits", "g_cand_cells"]
+            "g_cn_calls", "g_cn_cells", "g_cn_hits", "g_sl_iter", "g_cand_cells"]
 
 DRIVER = r"""
 #include <stdio.h>
@@ -250,6 +254,7 @@ def main():
             ("checkLine(索引)", tot["g_checkline"], tot["g_checkline"] * 4),
             ("winsAt(索引)", tot["g_wins_calls"], tot["g_wins_calls"] * 4),
             ("checkNow(box)", tot["g_cn_calls"], tot["g_cn_cells"]),
+            ("checkNow(清單)", tot["g_cn_calls"], tot["g_sl_iter"]),
             ("候選迴圈(box)", tot["g_adj_calls"], tot["g_cand_cells"]),
         ]
         total_cells = sum(c for _, _, c in budget)

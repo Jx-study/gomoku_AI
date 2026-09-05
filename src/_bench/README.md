@@ -18,6 +18,7 @@
 | `ai_v3_1.dll` | D1c 增量索引之後 |
 | `ai_v3_2.dll` | D2 鄰格計數表之後 |
 | `ai_v3_3.dll` | D6 `maxRunAt` 併入窗口索引之後 |
+| `ai_v3_4.dll` | D7 `checkNow` 改走棋子清單之後 |
 
 `../ai.dll` 是現行版，也是 `bench.py` 的預設對照組。基準 dll 找不到時 `bench.py` 會報錯。
 

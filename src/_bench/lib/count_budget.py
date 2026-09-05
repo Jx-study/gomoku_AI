@@ -1,12 +1,16 @@
-"""搜索裡三個掃描基元各做了多少工作，確定性指標。
+"""搜索讀了幾個盤面格，依來源拆開，確定性指標。
 
 checkLine 單次只有幾十奈秒，這個尺度的計時不準，profiler 的插樁本身也比被量的
-函數更貴（見 README 的「熱點量測」）。這裡改量每個基元讀取幾個盤面格，
+函數更貴（見 README 的「熱點量測」）。這裡改量每個來源讀取幾個盤面格，
 這個數字跑幾次都一樣。
+
+來源分兩類：掃描基元（hasAdjacentPiece / maxRunAt / checkLine）在函數內部，
+外層 box 掃描（checkNow、四處候選迴圈）在呼叫端的雙層迴圈裡。兩類都要數，
+只數基元會漏掉四分之一的存取量。
 
 同時回答兩個增量維護的划算門檻（維護成本 vs 查詢省下的掃描）：
     windowIdx（D1c，已上線）：checkLine 呼叫數 / 落子數 > 80 / 40 = 2
-    鄰格計數表（D2，待辦）：hasAdjacentPiece 呼叫數 / 落子數 > 24 / 實測格每次
+    鄰格計數表（D2，已上線）：hasAdjacentPiece 呼叫數 / 落子數 > 24 / 實測格每次
 
 做法與 count_cells.py 相同：讀 ai.c，只插計數器，ai.c 本身不修改，每次執行重新生成。
 探針在 ai.c 找不到對應位置時會以非 0 結束。
@@ -70,9 +74,19 @@ PROBES = [
     ("                    if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;",
      "                    g_eg_forbid++;\n"
      "                    if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;"),
-    ("                    if (judgeMove(board, x, y, player) == 2) {",
+    ("                    if (winsAt(board, x, y, player)) {",
      "                    g_eg_five++;\n"
-     "                    if (judgeMove(board, x, y, player) == 2) {"),
+     "                    if (winsAt(board, x, y, player)) {"),
+    # hasAdjacentPiece 回傳 true 的次數：候選迴圈掃出來的格子有多少是真候選
+    ("    if (idxValid) return neighborCount[y][x] > 0;",
+     "    if (idxValid) { bool r = neighborCount[y][x] > 0; if (r) g_adj_hits++; return r; }"),
+    # checkNow：呼叫數、內層迴圈次數（每次 1 格）、其中命中 player 的次數
+    ("void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {",
+     "void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {\n"
+     "    g_cn_calls++;"),
+    ("            if (board[y][x] == player) {",
+     "            g_cn_cells++;\n"
+     "            if (board[y][x] == player) { g_cn_hits++;"),
     # 落子/撤銷單一入口
     ("static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
      "static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
@@ -82,9 +96,17 @@ PROBES = [
      "    g_placements++;"),
 ]
 
-COUNTERS = ["g_adj_calls", "g_adj_cells", "g_run_calls", "g_run_cells",
+# 四處候選迴圈（endGame / sortMoves ×2 / listFivePoints / listFourMoves 共用同一個形式），
+# 縮排不同所以用行錨點；每次迴圈讀 1 格 board[y][x]
+CAND_PROBE = re.compile(
+    r"^([ \t]*)(if \(board\[y\]\[x\] != 0 \|\| !hasAdjacentPiece\(board, x, y\)\) continue;)$", re.M)
+CAND_PROBE_ENDGAME = "                if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {"
+EXPECTED_CAND_LOOPS = 5
+
+COUNTERS = ["g_adj_calls", "g_adj_cells", "g_adj_hits", "g_run_calls", "g_run_cells",
             "g_checkline", "g_judge_calls", "g_judge_deep",
-            "g_eg_forbid", "g_eg_five", "g_placements"]
+            "g_eg_forbid", "g_eg_five", "g_placements",
+            "g_cn_calls", "g_cn_cells", "g_cn_hits", "g_cand_cells"]
 
 DRIVER = r"""
 #include <stdio.h>
@@ -142,6 +164,14 @@ def instrument(src):
         if needle not in out:
             sys.exit("count_budget: 找不到探針錨點，ai.c 可能改了：\n  %s" % needle[:80])
         out = out.replace(needle, replacement, 1)
+
+    if CAND_PROBE_ENDGAME not in out:
+        sys.exit("count_budget: 找不到 endGame 的候選迴圈錨點，ai.c 可能改了。")
+    out = out.replace(CAND_PROBE_ENDGAME, "                g_cand_cells++;\n" + CAND_PROBE_ENDGAME, 1)
+    out, n = CAND_PROBE.subn(r"\1g_cand_cells++;\n\1\2", out)
+    if n + 1 != EXPECTED_CAND_LOOPS:
+        sys.exit("count_budget: 候選迴圈找到 %d 處（預期 %d），呼叫端的形式可能改了。"
+                 % (n + 1, EXPECTED_CAND_LOOPS))
     return "".join("extern long long %s;\n" % n for n in COUNTERS) + out
 
 
@@ -198,29 +228,42 @@ def main():
                 tot[k] += row[k]
 
         print("每個盤面的掃描工作（確定性，重跑結果相同）\n")
-        print("%-10s %10s %12s %12s %12s"
-              % ("盤面", "落子/撤銷", "hasAdj 讀格", "maxRunAt 讀格", "checkLine"))
+        print("%-10s %10s %11s %12s %10s %12s %11s"
+              % ("盤面", "落子/撤銷", "hasAdj 讀格", "maxRunAt 讀格", "checkLine",
+                 "checkNow", "候選迴圈"))
         for name, row in per_board:
-            print("%-10s %10d %12d %12d %12d"
-                  % (name, row["g_placements"], row["g_adj_cells"],
-                     row["g_run_cells"], row["g_checkline"]))
-        print("%-10s %10d %12d %12d %12d"
-              % ("合計", tot["g_placements"], tot["g_adj_cells"],
-                 tot["g_run_cells"], tot["g_checkline"]))
+            print("%-10s %10d %11d %12d %10d %12d %11d"
+                  % (name, row["g_placements"], row["g_adj_cells"], row["g_run_cells"],
+                     row["g_checkline"], row["g_cn_cells"], row["g_cand_cells"]))
+        print("%-10s %10d %11d %12d %10d %12d %11d"
+              % ("合計", tot["g_placements"], tot["g_adj_cells"], tot["g_run_cells"],
+                 tot["g_checkline"], tot["g_cn_cells"], tot["g_cand_cells"]))
 
         budget = [
             ("hasAdjacentPiece", tot["g_adj_calls"], tot["g_adj_cells"]),
             ("maxRunAt", tot["g_run_calls"], tot["g_run_cells"]),
             ("checkLine(索引)", tot["g_checkline"], tot["g_checkline"] * 4),
+            ("checkNow(box)", tot["g_cn_calls"], tot["g_cn_cells"]),
+            ("候選迴圈(box)", tot["g_adj_calls"], tot["g_cand_cells"]),
         ]
         total_cells = sum(c for _, _, c in budget)
-        print("\n三個掃描基元的存取預算（合計）\n")
-        print("%-20s %12s %14s %9s %8s" % ("基元", "呼叫數", "讀格數", "格/次", "佔比"))
+        print("\n盤面存取預算（合計）\n")
+        print("%-20s %12s %14s %9s %8s" % ("來源", "呼叫數", "讀格數", "格/次", "佔比"))
         for name, calls, cells in budget:
             print("%-20s %12d %14d %9.2f %7.1f%%"
                   % (name, calls, cells, cells / calls if calls else 0,
                      100.0 * cells / total_cells if total_cells else 0))
         print("%-20s %12s %14d" % ("合計", "", total_cells))
+
+        print("\n兩個 box 掃描的命中率（掃出來的格子有多少真的要用）")
+        print("  checkNow：%d 格掃出 %d 顆該色棋子（%.1f%%）"
+              % (tot["g_cn_cells"], tot["g_cn_hits"],
+                 100.0 * tot["g_cn_hits"] / tot["g_cn_cells"] if tot["g_cn_cells"] else 0))
+        print("  候選迴圈：%d 格掃出 %d 個空格（%.1f%%）、%d 個真候選（%.1f%%）"
+              % (tot["g_cand_cells"], tot["g_adj_calls"],
+                 100.0 * tot["g_adj_calls"] / tot["g_cand_cells"] if tot["g_cand_cells"] else 0,
+                 tot["g_adj_hits"],
+                 100.0 * tot["g_adj_hits"] / tot["g_cand_cells"] if tot["g_cand_cells"] else 0))
 
         print("\njudgeMove 呼叫 %d 次，其中走到 checkLine 的 %d 次（%.1f%%）"
               % (tot["g_judge_calls"], tot["g_judge_deep"],

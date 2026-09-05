@@ -267,7 +267,7 @@ class TestBlackOverline:
 
         盤面與 test_six_by_filling_gap 的其他構型完全等價（同樣是連續
         六子）。曾因 checkLine 的棋型分類漏判而判成合法，現由
-        judgeMove 直接數連續長度（maxRunAt）處理。
+        judgeMove 經 checkLine 查 patternTable 的長連碼（13）處理。
         """
         stones = line(7, [3, 4, 5, 6], BLACK) + line(7, [8], BLACK)
         assert not is_legal(judge(stones, 7, 7))
@@ -293,7 +293,7 @@ class TestFiveDetectionIgnoresShape:
     checkLine 的 gaps == 1 分支只處理 count 為 3、4 的情形。當落子點
     隔一格外還有己方棋子時 count >= 5，所有子條件皆落空、回傳全零，
     於是「明明成五」被判成普通著法——AI 因此漏擋而輸棋。
-    現改由 maxRunAt 直接數連續長度。
+    現改由 checkLine 查 patternTable 的恰好五連碼（5）判定。
     """
 
     WIN = 2
@@ -334,7 +334,8 @@ class TestFiveDetectionIgnoresShape:
         """五連優先於禁手：水平恰好五連、垂直長連時，黑棋勝而非長連禁手。
 
         只取四個方向的最長連續長度會讓垂直的七連蓋過水平的五連，
-        因此 maxRunAt 另外回報「有無任一方向恰好五連」。
+        因此 patternTable 把恰好五連（碼 5）與長連（碼 13）分開編碼，
+        由 checkLine 逐方向讀取，不會互相蓋過。
         """
         stones = (line(7, [8, 9, 10, 11], BLACK)
                   + [(7, y, BLACK) for y in (4, 5, 6, 8, 9, 10)])

@@ -373,16 +373,20 @@ void initPatternTable() {
     }
 }
 
-// 檢查該位置落子后的連綫數
-// 四個方向各查一次棋型表，命中的棋型 index 累加進 my_line
-void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
-    // 首次呼叫時建表：checkUnValid 這條路徑不經過 aiRound，不能靠它初始化
-    // 與 findBestMove 初始化置換表同一個模式
+// 首次呼叫時建表：checkUnValid 這條路徑不經過 aiRound，不能靠它初始化
+// 與 findBestMove 初始化置換表同一個模式；checkLine、winsAt 共用
+static void ensurePatternTable(void) {
     static bool patternTableReady = false;
     if (!patternTableReady) {
         initPatternTable();
         patternTableReady = true;
     }
+}
+
+// 檢查該位置落子后的連綫數
+// 四個方向各查一次棋型表，命中的棋型 index 累加進 my_line
+void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
+    ensurePatternTable();
 
     int dx[] = {1, 1, 0, -1};   // 水平、垂直、主對角線、副對角線
     int dy[] = {0, 1, 1, 1};
@@ -409,6 +413,8 @@ void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int
 // 落子後通過該點的最長連續棋子數；hasFive 回報是否有任一方向恰好五連
 // 勝負與長連只看連續長度，不經過棋型分類
 // 兩者分開回報：五連與長連可能同時出現在不同方向，只看最長值會誤判黑棋禁手
+// 已不在生產路徑：判定改查 patternTable（見 judgeMove、winsAt），這裡留作
+// test_pattern_table.py 的參考實作與對拍用途，勿刪
 int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *hasFive) {
     int dx[] = {1, 1, 0, -1};
     int dy[] = {0, 1, 1, 1};
@@ -439,17 +445,10 @@ int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *has
          -3/-4/-6 = 黑棋禁手（三三/四四/長連） */
 int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     if (board[y][x] != 0) return 0;
-    int hasFive;
-    int run = maxRunAt(board, x, y, player, &hasFive);
-    if (hasFive) return 2;                        // 五連即勝，優先於一切禁手
-    if (run > 5) {
-        if (player == 2) return 2;                // 長連只對白棋算勝
-        return -6;                                // 黑棋長連禁手
-    }
-
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int line[14] = {0};
     checkLine(board, x, y, player, line);
+    if (line[5] > 0) return 2;                       // 五連即勝，優先於一切禁手
+    if (line[13] > 0) return player == 2 ? 2 : -6;   // 長連只對白棋算勝
     if (player == 1) {
         if ((line[3] + line[9]) >= 2) return -3;
         if ((line[4] + line[8] + line[10] + line[12]) >= 2) return -4;
@@ -457,13 +456,22 @@ int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     return 1;
 }
 
-// 只用 maxRunAt 判定 judgeMove(...) == 2 的成五/白棋長連分支，跳過 checkLine 的棋型分類
+// 直接查 patternTable 四個方向，索引與 checkLine 一致，但跳過 line[14] 的清零與累加，只認 5、13 兩個代碼
 // 語意須與 judgeMove 逐項對得上：成五與白棋長連 true，黑棋長連與其餘一律 false
 static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
-    int hasFive;
-    int run = maxRunAt(board, x, y, player, &hasFive);
-    if (hasFive) return true;
-    return run > 5 && player == 2;
+    ensurePatternTable();
+
+    int dx[] = {1, 1, 0, -1};   // 水平、垂直、主對角線、副對角線
+    int dy[] = {0, 1, 1, 1};
+
+    for (int i = 0; i < 4; i++) {
+        int idx = idxValid ? windowIdx[player - 1][y][x][i]
+                            : encodeWindow(board, x, y, dx[i], dy[i], player);
+        int code = patternTable[idx];
+        if (code == 5) return true;
+        if (code == 13 && player == 2) return true;
+    }
+    return false;
 }
 
 /* 檢查指定位置是否有棋子/落子後是否形成禁手
@@ -480,7 +488,7 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
     int my_line[14] = {0}, op_line[14] = {0}; // 该位置落子后，自己和对手的连线数
 
-    // 成五直接給最高分，與 judgeMove/maxRunAt 共用同一套判定
+    // 成五直接給最高分，與 judgeMove 共用同一套判定
     // 勝著不必再經棋型分類，也避免這類點被 score != 0 濾掉
     if (judgeMove(board, x, y, player) == 2) return 2000000;
 
@@ -649,7 +657,7 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
                     // 實際落子的是 currentPlayer，黑棋禁手點不能下
                     if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;
                     // ai勝利（直接落子）/ 對手勝利（防守）：單點判定，免落子、免全盤掃描
-                    // 只可能是 judgeMove 開頭 maxRunAt 那段回傳 2，checkLine 分類是死程式碼
+                    // winsAt 直接查 patternTable，不經 judgeMove／checkLine 的完整分類
                     if (winsAt(board, x, y, player)) {
                         *bestX = x;
                         *bestY = y;

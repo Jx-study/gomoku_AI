@@ -9,8 +9,9 @@ checkLine 單次只有幾十奈秒，這個尺度的計時不準，profiler 的�
 只數基元會漏掉四分之一的存取量。
 
 同時回答兩個增量維護的划算門檻（維護成本 vs 查詢省下的掃描）：
-    windowIdx（D1c，已上線）：checkLine 呼叫數 / 落子數 > 80 / 40 = 2
-    鄰格計數表（D2，已上線）：hasAdjacentPiece 呼叫數 / 落子數 > 24 / 實測格每次
+    windowIdx（已上線）：(checkLine+winsAt) 呼叫數 / 落子數 > 80 / 40 = 2
+        （winsAt 直接查同一份索引，併入分子）
+    鄰格計數表（已上線）：hasAdjacentPiece 呼叫數 / 落子數 > 24 / 實測格每次
 
 做法與 count_cells.py 相同：讀 ai.c，只插計數器，ai.c 本身不修改，每次執行重新生成。
 探針在 ai.c 找不到對應位置時會以非 0 結束。
@@ -57,19 +58,23 @@ PROBES = [
     ("                if (board[ny][nx] != player) break;",
      "                g_run_cells++;\n"
      "                if (board[ny][nx] != player) break;"),
-    # checkLine：呼叫數（D1c 之後每次固定 4 次索引存取，不必另外數）
+    # checkLine：呼叫數（每次固定 4 次索引存取，不必另外數）
     ("void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {",
      "void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {\n"
      "    g_checkline++;"),
+    # winsAt：呼叫數（直接查索引，不再經過 checkLine，固定 4 次索引存取）
+    ("static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
+     "static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
+     "    g_wins_calls++;"),
     # judgeMove：總呼叫數，以及其中走到 checkLine 的（沒在 maxRunAt 那段就返回的）
     ("int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
      "    if (board[y][x] != 0) return 0;",
      "int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
      "    g_judge_calls++;\n"
      "    if (board[y][x] != 0) return 0;"),
-    ("    int line[14] = {0};\n    checkLine(board, x, y, player, line);\n    if (player == 1) {",
+    ("    int line[14] = {0};\n    checkLine(board, x, y, player, line);\n    if (line[5] > 0) return 2;",
      "    int line[14] = {0};\n    g_judge_deep++;\n    checkLine(board, x, y, player, line);\n"
-     "    if (player == 1) {"),
+     "    if (line[5] > 0) return 2;"),
     # endGame 的兩個 judgeMove 呼叫點分開數：成五那個不需要 checkLine（見 03-impl-d2.md 待辦 A）
     ("                    if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;",
      "                    g_eg_forbid++;\n"
@@ -104,7 +109,7 @@ CAND_PROBE_ENDGAME = "                if (board[y][x] == 0 && hasAdjacentPiece(b
 EXPECTED_CAND_LOOPS = 5
 
 COUNTERS = ["g_adj_calls", "g_adj_cells", "g_adj_hits", "g_run_calls", "g_run_cells",
-            "g_checkline", "g_judge_calls", "g_judge_deep",
+            "g_checkline", "g_wins_calls", "g_judge_calls", "g_judge_deep",
             "g_eg_forbid", "g_eg_five", "g_placements",
             "g_cn_calls", "g_cn_cells", "g_cn_hits", "g_cand_cells"]
 
@@ -243,6 +248,7 @@ def main():
             ("hasAdjacentPiece", tot["g_adj_calls"], tot["g_adj_cells"]),
             ("maxRunAt", tot["g_run_calls"], tot["g_run_cells"]),
             ("checkLine(索引)", tot["g_checkline"], tot["g_checkline"] * 4),
+            ("winsAt(索引)", tot["g_wins_calls"], tot["g_wins_calls"] * 4),
             ("checkNow(box)", tot["g_cn_calls"], tot["g_cn_cells"]),
             ("候選迴圈(box)", tot["g_adj_calls"], tot["g_cand_cells"]),
         ]
@@ -268,28 +274,26 @@ def main():
         print("\njudgeMove 呼叫 %d 次，其中走到 checkLine 的 %d 次（%.1f%%）"
               % (tot["g_judge_calls"], tot["g_judge_deep"],
                  100.0 * tot["g_judge_deep"] / tot["g_judge_calls"] if tot["g_judge_calls"] else 0))
-        print("endGame 內：禁手檢查點 %d 次，成五檢查點 %d 次（後者不需要 checkLine，"
-              "佔全部 checkLine 呼叫的 %.1f%%）"
-              % (tot["g_eg_forbid"], tot["g_eg_five"],
-                 100.0 * tot["g_eg_five"] / tot["g_checkline"] if tot["g_checkline"] else 0))
+        print("endGame 內：禁手檢查點 %d 次，成五檢查點 %d 次（後者走 winsAt 直接查索引，成本見上表）"
+              % (tot["g_eg_forbid"], tot["g_eg_five"]))
 
         p = tot["g_placements"]
         print("\n增量維護的划算門檻（維護成本 vs 查詢省下的掃描）")
         if not p:
             print("  落子數為 0，這組盤面全被 endGame 快速路徑短路，算不出比值")
             return
-        win_ratio = tot["g_checkline"] / p
+        win_ratio = (tot["g_checkline"] + tot["g_wins_calls"]) / p
         win_threshold = WINDOW_UPDATE_COST / WINDOW_QUERY_SAVING
-        print("  windowIdx（已上線）：checkLine/落子 = %.2f，門檻 %.2f → %s"
+        print("  windowIdx（已上線）：(checkLine+winsAt)/落子 = %.2f，門檻 %.2f → %s"
               % (win_ratio, win_threshold, "划算" if win_ratio > win_threshold else "不划算"))
         adj_per_call = tot["g_adj_cells"] / tot["g_adj_calls"] if tot["g_adj_calls"] else 0
         if adj_per_call:
             adj_ratio = tot["g_adj_calls"] / p
             adj_threshold = ADJ_UPDATE_COST / adj_per_call
-            print("  鄰格計數表（D2 待辦）：hasAdjacentPiece/落子 = %.2f，門檻 %.2f → %s"
+            print("  鄰格計數表（待辦）：hasAdjacentPiece/落子 = %.2f，門檻 %.2f → %s"
                   % (adj_ratio, adj_threshold, "划算" if adj_ratio > adj_threshold else "不划算"))
         else:
-            print("  鄰格計數表：hasAdjacentPiece 已不掃描盤面，門檻不適用（D2 已上線）")
+            print("  鄰格計數表：hasAdjacentPiece 已不掃描盤面，門檻不適用（已上線）")
     finally:
         shutil.rmtree(WORKDIR, ignore_errors=True)
 

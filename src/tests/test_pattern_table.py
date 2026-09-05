@@ -17,8 +17,10 @@ twin 改用「枚舉所有含中心的 5 格區間、看每個區間缺幾子」
 找不到時整個模組會被 skip。
 """
 import ctypes
+import itertools
 import os
 import platform
+import random
 
 import pytest
 
@@ -374,7 +376,7 @@ class TestFiveAndOverlineDetection:
 class TestCheckLineAtBoardEdges:
     """端到端：`checkLine` 在貼邊落子點的輸出必須與查表一致。
 
-    D1 的對拍只把落子點放在盤面中央，中央永遠碰不到牆，
+    原本的對拍只把落子點放在盤面中央，中央永遠碰不到牆，
     整類與邊界互動的行為一次都沒被測到（實測漏掉 31,662 筆差異）。
     這裡改為掃過所有會碰到牆的 x，把出界的格子固定成 OPP 後比對。
     """
@@ -520,3 +522,266 @@ class TestKnownShapes:
         assert render(cells) == "....SSSSS.S"
         assert classify_c(cells) == 5
         assert classify_window_twin(cells) == 5
+
+
+# --------------------------------------------------------------------------
+# 把「patternTable 可以取代 maxRunAt」的推導寫成測試
+# --------------------------------------------------------------------------
+# judgeMove 曾經呼叫 maxRunAt 逐格外掃來判五連/長連，現已改成直接讀
+# patternTable 的代碼 5（恰五）與 13（長連，>=6）。這裡證明兩者等價。
+# maxRunAt 本身不刪，留著當參考實作，這裡的測試繼續呼叫它、繼續有意義。
+def solidRun(cells):
+    """穿過中心的連續 SELF 長度，與 `_true_run` 各自獨立寫成，供對拍。
+
+    做法不同於 `_true_run`（逐格 for-break）：這裡把中心兩側切成兩段
+    子串列，用 `itertools.takewhile` 數各自能連續匹配 SELF 的前綴長度，
+    兩段前綴長度相加再加中心本身。
+    """
+    left_side = cells[CENTER - 1::-1]     # 中心左側，由近到遠
+    right_side = cells[CENTER + 1:]       # 中心右側，由近到遠
+    left_run = sum(1 for _ in itertools.takewhile(lambda c: c == SELF, left_side))
+    right_run = sum(1 for _ in itertools.takewhile(lambda c: c == SELF, right_side))
+    return left_run + 1 + right_run
+
+
+class TestSolidRunTwin:
+    """`solidRun` 自身的健檢：先確定這份獨立實作没寫錯，再拿去對拍。"""
+
+    def test_matches_true_run_reference_on_known_shapes(self):
+        # 這裡刻意跟 _true_run 對一次，確保兩份「結構不同」的實作對得上，
+        # 但下面的全枚舉對拍不再依賴 _true_run，直接對 classifyWindow。
+        cases = [
+            ".....S.....",
+            "SSSSSSSSSSS",
+            "OOOSSSSSOOO",
+            "OOOOSSSSSOO",
+            "...SSS.....",
+            "OOO.SSS.OOO",
+            "..S.S.S.S..",
+        ]
+        for window in cases:
+            cells = [{"S": SELF, "O": OPP, ".": EMPTY}[ch] for ch in window]
+            assert solidRun(cells) == _true_run(cells), window
+
+
+class TestWindowLayerFiveAndOverlineEquivalence:
+    """窗口層全枚舉：`classifyWindow` 的代碼 5/13 等價於 `solidRun` 的 5 / >=6。
+
+    對拍對象是 `classify_c`（即 `classifyWindow`），不是 `classify_window_twin`——
+    後者本身也是重寫的推導，這裡要單獨驗證「五連/長連代碼」與「連續子數」
+    這組更窄、更貼近 maxRunAt 語意的等價關係，避免把兩層獨立實作的誤差疊在一起看。
+    """
+
+    def test_code_five_iff_solid_run_five(self, classify_c):
+        mismatches = []
+        for idx in range(TABLE_SIZE):
+            cells = decode(idx)
+            code = classify_c(cells)
+            run = solidRun(cells)
+            if (code == 5) != (run == 5):
+                mismatches.append((idx, render(cells), code, run))
+        report = "\n".join(
+            f"  idx={i:5d} {w}  code={c} solidRun={r}" for i, w, c, r in mismatches[:60]
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} / {TABLE_SIZE} 筆 code==5 與 solidRun==5 不等價:\n{report}"
+        )
+
+    def test_code_overline_iff_solid_run_at_least_six(self, classify_c):
+        mismatches = []
+        for idx in range(TABLE_SIZE):
+            cells = decode(idx)
+            code = classify_c(cells)
+            run = solidRun(cells)
+            if (code == 13) != (run >= 6):
+                mismatches.append((idx, render(cells), code, run))
+        report = "\n".join(
+            f"  idx={i:5d} {w}  code={c} solidRun={r}" for i, w, c, r in mismatches[:60]
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} / {TABLE_SIZE} 筆 code==13 與 solidRun>=6 不等價:\n{report}"
+        )
+
+
+# --------------------------------------------------------------------------
+# ctypes fixture：maxRunAt（board 層對拍才需要，Step 2 之前的 fixture 都不用它）
+# --------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def max_run_at(lib):
+    """回傳 max_run_at(board, x, y, player) -> (run, hasFive)。"""
+    board_max = lib.getBoardMax()
+    board_type = (ctypes.c_int * board_max) * board_max
+    lib.maxRunAt.restype = ctypes.c_int
+    lib.maxRunAt.argtypes = [
+        ctypes.POINTER(board_type),
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+
+    def _call(board, x, y, player):
+        has_five = ctypes.c_int(0)
+        run = lib.maxRunAt(ctypes.byref(board), x, y, player, ctypes.byref(has_five))
+        return run, has_five.value
+
+    _call.board_max = board_max
+    _call.board_type = board_type
+    return _call
+
+
+@pytest.fixture(scope="module")
+def check_line_full(lib):
+    """回傳 check_line_full(board, x, y, player) -> my_line[14] 的 list。
+
+    跟既有的 `check_line` fixture 不同：這裡吃真正的整個盤面（不是單一窗口
+    臨時搭出來的水平線），給板級差分測試用，四個方向都真實參與。
+    """
+    board_max = lib.getBoardMax()
+    board_type = (ctypes.c_int * board_max) * board_max
+    lib.checkLine.restype = None
+    lib.checkLine.argtypes = [
+        ctypes.POINTER(board_type),
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int * 14),
+    ]
+
+    def _call(board, x, y, player):
+        my_line = (ctypes.c_int * 14)()
+        lib.checkLine(ctypes.byref(board), x, y, player, my_line)
+        return list(my_line)
+
+    _call.board_max = board_max
+    _call.board_type = board_type
+    return _call
+
+
+# --------------------------------------------------------------------------
+# 板級差分：真實盤面上，maxRunAt 與 checkLine 的五連/長連判斷要一致
+# --------------------------------------------------------------------------
+def _empty_board(board_type, board_max):
+    board = board_type()
+    for y in range(board_max):
+        for x in range(board_max):
+            board[y][x] = EMPTY
+    return board
+
+
+def _make_random_boards(board_type, board_max, seeds):
+    """隨機盤面：固定種子、隨機撒子（含兩色），拿來覆蓋一般雜亂局面。"""
+    boards = []
+    for seed in seeds:
+        rng = random.Random(seed)
+        board = _empty_board(board_type, board_max)
+        # 撒約三成格子，兩色都有，密度夠高才容易湊出五連/長連附近的形狀
+        for y in range(board_max):
+            for x in range(board_max):
+                roll = rng.random()
+                if roll < 0.15:
+                    board[y][x] = BLACK
+                elif roll < 0.30:
+                    board[y][x] = WHITE
+        boards.append(board)
+    return boards
+
+
+def _make_edge_run_boards(board_type, board_max):
+    """貼邊/貼角的連續長條：長度涵蓋 3..8，跨過牆截斷與五/六/七連的邊界。
+
+    分別沿最上一列（貼上邊）與最左一欄（貼左邊，且從角落 (0,0) 起跳）鋪子，
+    確保窗口在牆邊被截斷時，maxRunAt 與 checkLine 依然一致。
+    """
+    boards = []
+    for length in range(3, 9):
+        # 貼上邊的水平長條，從最左邊開始鋪，長度不超過盤面寬度
+        length_h = min(length, board_max)
+        board = _empty_board(board_type, board_max)
+        for x in range(length_h):
+            board[0][x] = BLACK
+        boards.append(board)
+
+        # 貼左邊、從角落開始的垂直長條
+        length_v = min(length, board_max)
+        board = _empty_board(board_type, board_max)
+        for y in range(length_v):
+            board[y][0] = WHITE
+        boards.append(board)
+    return boards
+
+
+def _make_diagonal_boards(board_type, board_max):
+    """主對角線與副對角線各鋪一條連續長條，覆蓋 checkLine 的另外兩個方向。"""
+    boards = []
+    for length in range(3, 9):
+        n = min(length, board_max)
+
+        # 主對角線（左上到右下），從 (0,0) 開始
+        board = _empty_board(board_type, board_max)
+        for i in range(n):
+            board[i][i] = BLACK
+        boards.append(board)
+
+        # 副對角線（右上到左下），從 (board_max - 1, 0) 開始
+        board = _empty_board(board_type, board_max)
+        for i in range(n):
+            board[i][board_max - 1 - i] = WHITE
+        boards.append(board)
+    return boards
+
+
+class TestBoardLevelMaxRunAtEquivalence:
+    """板級差分：對每個空格、兩個視角，maxRunAt 與 checkLine 的五連/長連判斷要相符。
+
+    覆蓋隨機盤面、貼邊長條、對角線三類，專門去戳窗口被牆截斷、以及
+    5/6/7 子邊界這幾個歷史上容易出錯的地方。
+    """
+
+    @pytest.fixture(scope="class")
+    def boards(self, max_run_at):
+        board_type = max_run_at.board_type
+        board_max = max_run_at.board_max
+        boards = []
+        boards += _make_random_boards(board_type, board_max, seeds=(1, 2, 3))
+        boards += _make_edge_run_boards(board_type, board_max)
+        boards += _make_diagonal_boards(board_type, board_max)
+        return boards
+
+    def test_has_five_matches_checkline_slot_five(self, max_run_at, check_line_full, boards):
+        board_max = max_run_at.board_max
+        mismatches = []
+        for board in boards:
+            for y in range(board_max):
+                for x in range(board_max):
+                    if board[y][x] != EMPTY:
+                        continue
+                    for player in (BLACK, WHITE):
+                        _, has_five = max_run_at(board, x, y, player)
+                        my_line = check_line_full(board, x, y, player)
+                        if bool(has_five) != (my_line[5] > 0):
+                            mismatches.append((x, y, player, has_five, my_line[5]))
+        report = "\n".join(
+            f"  x={x} y={y} player={p} hasFive={h} line[5]={l}"
+            for x, y, p, h, l in mismatches[:40]
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} 筆 hasFive 與 checkLine[5] 不等價:\n{report}"
+        )
+
+    def test_overline_run_matches_checkline_slot_thirteen(self, max_run_at, check_line_full, boards):
+        board_max = max_run_at.board_max
+        mismatches = []
+        for board in boards:
+            for y in range(board_max):
+                for x in range(board_max):
+                    if board[y][x] != EMPTY:
+                        continue
+                    for player in (BLACK, WHITE):
+                        run, _ = max_run_at(board, x, y, player)
+                        my_line = check_line_full(board, x, y, player)
+                        if (run > 5) != (my_line[13] > 0):
+                            mismatches.append((x, y, player, run, my_line[13]))
+        report = "\n".join(
+            f"  x={x} y={y} player={p} run={r} line[13]={l}"
+            for x, y, p, r, l in mismatches[:40]
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} 筆 run>5 與 checkLine[13] 不等價:\n{report}"
+        )

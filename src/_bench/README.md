@@ -17,6 +17,7 @@
 | `ai_v3_0.dll` | 棋型查表之後、增量索引之前 |
 | `ai_v3_1.dll` | D1c 增量索引之後 |
 | `ai_v3_2.dll` | D2 鄰格計數表之後 |
+| `ai_v3_3.dll` | D6 `maxRunAt` 併入窗口索引之後 |
 
 `../ai.dll` 是現行版，也是 `bench.py` 的預設對照組。基準 dll 找不到時 `bench.py` 會報錯。
 
@@ -132,8 +133,9 @@ pytest src/tests/test_zobrist.py
 
 `budget` 與 `cells` 改量「做了多少工作」，數字跑幾次都一樣。
 
-`bench.py budget` 量整場搜索：三個掃描基元（`hasAdjacentPiece`、`maxRunAt`、`checkLine`）
-各讀了幾格、各佔多少，另外給出增量維護划不划算的門檻判定。
+`bench.py budget` 量整場搜索：`hasAdjacentPiece`、`checkLine`、`winsAt` 三個索引/掃描來源
+（`maxRunAt` 已不在生產路徑，讀格數恆為 0）各讀了幾格、各佔多少，
+另外給出增量維護划不划算的門檻判定。
 盤面取自 `lib/positions.py`，與 `hotspots` 同一組。
 
 `bench.py cells` 只量 `checkLine`，兩個版本對比。它不跑 `aiRound`，

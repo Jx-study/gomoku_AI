@@ -149,8 +149,8 @@ int encodeWindow(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, 
 // 視角 p 對應玩家 p+1；牆在 rebuild 時就編進初值，增量更新不碰牆
 static int windowIdx[2][BOARD_MAX][BOARD_MAX][4];
 
-// windowIdx 是否可信；只在 findBestMove/vcfProbe 的搜索期間為真
-// checkUnValid 這條路徑不經過搜索入口，索引可能是舊局面甚至全零，靠這個旗標退回 encodeWindow
+// windowIdx 與 neighborCount 是否可信；只在 findBestMove/vcfProbe 的搜索期間為真
+// checkUnValid 這條路徑不經過搜索入口，兩張表可能是舊局面甚至全零，靠這個旗標退回原地掃描
 static bool idxValid = false;
 
 // 3 的次方表，POW3[e] = 3^e，e 對應 weightExp 算出的位權指數
@@ -209,6 +209,58 @@ static void checkWindowIndex(int board[BOARD_MAX][BOARD_MAX]) {
                     assert(windowIdx[p][y][x][d] == encodeWindow(board, x, y, dx[d], dy[d], p + 1));
                 }
             }
+        }
+    }
+}
+#endif
+
+#define ADJ_RANGE 2                                        // hasAdjacentPiece 的掃描半徑，與表共用避免漂移
+// neighborCount[y][x]：以 (x,y) 為中心的 5×5 內、不含中心的棋子數（不分黑白），上限 24 不會溢位
+static unsigned char neighborCount[BOARD_MAX][BOARD_MAX];
+
+// 全盤重算 neighborCount，掛在搜索入口，不依賴逐手同步
+static void rebuildNeighborCount(int board[BOARD_MAX][BOARD_MAX]) {
+    for (int y = 0; y < BOARD_MAX; y++) {
+        for (int x = 0; x < BOARD_MAX; x++) {
+            int count = 0;
+            for (int dy = -ADJ_RANGE; dy <= ADJ_RANGE; dy++) {
+                for (int dx = -ADJ_RANGE; dx <= ADJ_RANGE; dx++) {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < BOARD_MAX && ny >= 0 && ny < BOARD_MAX && board[ny][nx] != 0) count++;
+                }
+            }
+            neighborCount[y][x] = (unsigned char)count;
+        }
+    }
+}
+
+// 落子/撤銷在 5×5 鄰域造成的增量修正，delta 為 +1/-1（落子/撤銷）
+static void adjustNeighborCount(int x, int y, int delta) {
+    for (int dy = -ADJ_RANGE; dy <= ADJ_RANGE; dy++) {
+        for (int dx = -ADJ_RANGE; dx <= ADJ_RANGE; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            int nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= BOARD_MAX || ny < 0 || ny >= BOARD_MAX) continue;
+            neighborCount[ny][nx] += delta;
+        }
+    }
+}
+
+#ifdef WINDOW_IDX_CHECK
+// debug build 專用：增量結果必須等於當場重算，掛在 placeStone/removeStone 之後
+static void checkNeighborCount(int board[BOARD_MAX][BOARD_MAX]) {
+    for (int y = 0; y < BOARD_MAX; y++) {
+        for (int x = 0; x < BOARD_MAX; x++) {
+            int count = 0;
+            for (int dy = -ADJ_RANGE; dy <= ADJ_RANGE; dy++) {
+                for (int dx = -ADJ_RANGE; dx <= ADJ_RANGE; dx++) {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (nx >= 0 && nx < BOARD_MAX && ny >= 0 && ny < BOARD_MAX && board[ny][nx] != 0) count++;
+                }
+            }
+            assert(neighborCount[y][x] == (unsigned char)count);
         }
     }
 }
@@ -405,6 +457,15 @@ int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     return 1;
 }
 
+// 只用 maxRunAt 判定 judgeMove(...) == 2 的成五/白棋長連分支，跳過 checkLine 的棋型分類
+// 語意須與 judgeMove 逐項對得上：成五與白棋長連 true，黑棋長連與其餘一律 false
+static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
+    int hasFive;
+    int run = maxRunAt(board, x, y, player, &hasFive);
+    if (hasFive) return true;
+    return run > 5 && player == 2;
+}
+
 /* 檢查指定位置是否有棋子/落子後是否形成禁手
 返回值：返回1如果落子後形成有效連線，否則返回禁手代碼（0：已有棋子，-3：三三禁手，-4：四四禁手，-5：長連禁手）*/
 int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
@@ -555,8 +616,9 @@ int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     else return 0; // 没有玩家赢
 }
 
-// 檢查5*5周圍是否有棋子
+// 檢查5*5周圍是否有棋子；索引可信時查表，否則退回掃描
 bool hasAdjacentPiece(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
+    if (idxValid) return neighborCount[y][x] > 0;
     int range = 2;
     for (int dx = -range; dx <= range; dx++) {
         for (int dy = -range; dy <= range; dy++) {
@@ -587,7 +649,8 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
                     // 實際落子的是 currentPlayer，黑棋禁手點不能下
                     if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;
                     // ai勝利（直接落子）/ 對手勝利（防守）：單點判定，免落子、免全盤掃描
-                    if (judgeMove(board, x, y, player) == 2) {
+                    // 只可能是 judgeMove 開頭 maxRunAt 那段回傳 2，checkLine 分類是死程式碼
+                    if (winsAt(board, x, y, player)) {
                         *bestX = x;
                         *bestY = y;
                         return 1;  // 立即返回獲勝移動
@@ -622,7 +685,7 @@ static int listFivePoints(int board[BOARD_MAX][BOARD_MAX], int player,
     for (int y = minY; y <= maxY; y++) {
         for (int x = minX; x <= maxX; x++) {
             if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
-            if (judgeMove(board, x, y, player) != 2) continue;
+            if (!winsAt(board, x, y, player)) continue;
             if (n < maxPts) { pts[n][0] = x; pts[n][1] = y; }
             n++;
         }
@@ -653,12 +716,14 @@ static int listFourMoves(int board[BOARD_MAX][BOARD_MAX], int player, Move *move
     return n;
 }
 
-// 落子單一入口，賦值後同步增量修正 windowIdx，不動 Zobrist key
+// 落子單一入口，賦值後同步增量修正 windowIdx 與 neighborCount，不動 Zobrist key
 static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     board[y][x] = player;
     adjustWindowIndex(x, y, player, 1);
+    adjustNeighborCount(x, y, 1);
 #ifdef WINDOW_IDX_CHECK
     checkWindowIndex(board);
+    checkNeighborCount(board);
 #endif
 }
 
@@ -666,9 +731,11 @@ static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player
 static void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
     int player = board[y][x];
     adjustWindowIndex(x, y, player, -1);
+    adjustNeighborCount(x, y, -1);
     board[y][x] = 0;
 #ifdef WINDOW_IDX_CHECK
     checkWindowIndex(board);
+    checkNeighborCount(board);
 #endif
 }
 
@@ -1000,6 +1067,7 @@ static void findBestMoveImpl(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *b
     // 每次搜索前以實際盤面重算，key 為絕對值——不依賴外部呼叫方逐手同步
     currentZobristKey = computeZobristKey(board);
     rebuildWindowIndex(board);
+    rebuildNeighborCount(board);
     int moveCount = 0;
 
     int maxDepth = MAX_DEPTH + (ai == 1 ? 1 : 0);
@@ -1090,6 +1158,7 @@ static int vcfProbeImpl(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, 
     int minX, maxX, minY, maxY;
     getBounds(board, &minX, &maxX, &minY, &maxY);
     rebuildWindowIndex(board);
+    rebuildNeighborCount(board);
     return vcfFindWin(board, attacker, minX, maxX, minY, maxY, wx, wy);
 }
 

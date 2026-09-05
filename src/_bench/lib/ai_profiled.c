@@ -116,10 +116,10 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     g_sortMovesSec += profNow() - t0;
 }
 
-int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, int maxX, int minY, int maxY, int currentPlayer) {
+int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, int maxX, int minY, int maxY, int currentPlayer, bool selfCanFive, bool oppCanFive) {
     g_endGameCalls++;
     double t0 = profNow();
-    int r = prof_real_endGame(board, bestX, bestY, minX, maxX, minY, maxY, currentPlayer);
+    int r = prof_real_endGame(board, bestX, bestY, minX, maxX, minY, maxY, currentPlayer, selfCanFive, oppCanFive);
     g_endGameSec += profNow() - t0;
     return r;
 }

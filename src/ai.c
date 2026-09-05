@@ -718,9 +718,13 @@ int Big_Small(const void* a, const void* b) {
 }
 
 // 快速處理勝局/敗局
-int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, int maxX, int minY, int maxY, int currentPlayer){
+// selfCanFive / oppCanFive 由呼叫端從棋型計數導出，見 sortMoves
+int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, int maxX, int minY, int maxY, int currentPlayer, bool selfCanFive, bool oppCanFive){
     int counter =0;
-    for (int player = currentPlayer; counter <2; player = 3 - player){
+    // counter 併進 for 的遞增段：迴圈體現在有 continue，留在體末會漏遞增
+    for (int player = currentPlayer; counter <2; player = 3 - player, counter++){
+        // 該方沒有成五點，這一趟全框掃描整個跳過
+        if (!(counter == 0 ? selfCanFive : oppCanFive)) continue;
         for (int x = minX; x <= maxX; x++) {
             for (int y = minY; y <= maxY; y++) {
                 if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {
@@ -736,7 +740,6 @@ int endGame(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int minX, i
                 }
             }
         }
-        counter++;
     }
     return 0;
 }
@@ -892,18 +895,24 @@ long long getVcfNodes(void) { return vcfNodes; }
 void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int minX, int maxX, int minY, int maxY, int player) {
     *count = 0;
 
-    // 最高優先級：檢查是否有立即獲勝的棋路
-    int bestX = -1, bestY = -1;
-    if (endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player)) {
-        moves[(*count)++] = (Move){bestX, bestY, 9999999};
-        return;
-    }
-
     // 統計當前AI和玩家的棋形數
     int my_now[14] = {0}, op_now[14] = {0};
     checkNow(board, minX, maxX, minY, maxY, player, my_now);
     checkNow(board, minX, maxX, minY, maxY, 3 - player, op_now);
-    
+
+    // 成五點存在的充要條件：該方有四。任何成五點的窗口裡都有四顆同色，
+    // 那四顆各自為中心必被分類成活四/沖四/跳活四/跳四之一
+    // 併入五連與長連：根節點不經 checkWin，盤上已成五時 endGame 仍須掃
+    bool selfCanFive = (my_now[4] + my_now[5] + my_now[8] + my_now[10] + my_now[12] + my_now[13]) > 0;
+    bool oppCanFive  = (op_now[4] + op_now[5] + op_now[8] + op_now[10] + op_now[12] + op_now[13]) > 0;
+
+    // 最高優先級：檢查是否有立即獲勝的棋路
+    int bestX = -1, bestY = -1;
+    if (endGame(board, &bestX, &bestY, minX, maxX, minY, maxY, player, selfCanFive, oppCanFive)) {
+        moves[(*count)++] = (Move){bestX, bestY, 9999999};
+        return;
+    }
+
     // 策略：條件+分數+檢查對象
     // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
     // 優先級：五連>活四>跳活四>衝四=活三>跳四>....

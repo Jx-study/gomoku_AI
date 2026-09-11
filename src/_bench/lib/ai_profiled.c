@@ -132,7 +132,7 @@ int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
     return r;
 }
 
-void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
+void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[16]) {
     g_checkLineCalls++;
     double t0 = profNow();
     prof_real_checkLine(board, x, y, player, my_line);

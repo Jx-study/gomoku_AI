@@ -59,8 +59,8 @@ PROBES = [
      "                g_run_cells++;\n"
      "                if (board[ny][nx] != player) break;"),
     # checkLine：呼叫數（每次固定 4 次索引存取，不必另外數）
-    ("void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {",
-     "void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {\n"
+    ("void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[16]) {",
+     "void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[16]) {\n"
      "    g_checkline++;"),
     # winsAt：呼叫數（直接查索引，不再經過 checkLine，固定 4 次索引存取）
     ("static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
@@ -72,8 +72,8 @@ PROBES = [
      "int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
      "    g_judge_calls++;\n"
      "    if (board[y][x] != 0) return 0;"),
-    ("    int line[14] = {0};\n    checkLine(board, x, y, player, line);\n    if (line[5] > 0) return 2;",
-     "    int line[14] = {0};\n    g_judge_deep++;\n    checkLine(board, x, y, player, line);\n"
+    ("    int line[16] = {0};\n    checkLine(board, x, y, player, line);\n    if (line[5] > 0) return 2;",
+     "    int line[16] = {0};\n    g_judge_deep++;\n    checkLine(board, x, y, player, line);\n"
      "    if (line[5] > 0) return 2;"),
     # endGame 的兩個 judgeMove 呼叫點分開數：成五那個不需要 checkLine（見 03-impl-d2.md 待辦 A）
     ("                    if (currentPlayer == 1 && judgeMove(board, x, y, 1) < 1) continue;",
@@ -86,8 +86,8 @@ PROBES = [
     ("    if (idxValid) return neighborCount[y][x] > 0;",
      "    if (idxValid) { bool r = neighborCount[y][x] > 0; if (r) g_adj_hits++; return r; }"),
     # checkNow：呼叫數、內層迴圈次數（每次 1 格）、其中命中 player 的次數
-    ("void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {",
-     "void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {\n"
+    ("void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[16]) {",
+     "void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[16]) {\n"
      "    g_cn_calls++;"),
     ("            if (board[y][x] == player) {",
      "            g_cn_cells++;\n"

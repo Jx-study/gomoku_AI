@@ -1,16 +1,19 @@
 """棋型查表的雙實作全枚舉對拍。
 
 `classifyWindow`（C，`ai.c`）把一條方向線的 11 格窗口（中心恆 SELF、牆併入 OPP）
-分類成 14 類棋型代碼之一。本檔用一個**獨立推導**的 Python 版 `classify_window_twin`
+分類成 16 類棋型代碼之一。本檔用一個**獨立推導**的 Python 版 `classify_window_twin`
 對全部 3^10 = 59049 種窗口對拍。
 
 分類依 RIF 定義：四是「能加一子成五」，活四是「能以兩種方式成五」，
 三是「能加一子成活四」。牆與敵子都不是空格，成五點自然數不到，
 所以不需要區分兩者。
 
-雙實作的意義：C 版由中心往外數點數（`fivePoints` / `threePoints` 各掃一遍窗口）。
-twin 改用「枚舉所有含中心的 5 格區間、看每個區間缺幾子」的區間視角推導，
-兩者結構不同，避免犯同一個錯。
+眠三/跳三（code 7/14）不是 RIF 定義，是本專案為了不讓「填了只能成衝四」
+的三級棋型完全消失（回傳 0）而新增的次級棋型，見 Note/technical/renju-rules.md。
+
+雙實作的意義：C 版由中心往外數點數（`fivePoints` / `threePoints` / `rushPoints`
+各掃一遍窗口）。twin 改用「枚舉所有含中心的 5 格區間、看每個區間缺幾子」的
+區間視角推導，兩者結構不同，避免犯同一個錯。
 
 需要先編譯共享庫：
     cd src && gcc -shared -o ai.dll -fPIC ai.c
@@ -33,8 +36,9 @@ TABLE_SIZE = 59049   # 3 ** 10
 
 BLACK, WHITE = 1, 2
 
-# 14 類代碼：[2:活二 3:活三 4:活四 5:五連 6:眠二 7:眠三 8:衝四
-#            9:跳活三 10:跳活四 11:跳三 12:跳四 13:長連]，0 = 無棋型
+# 16 類代碼：[2:活二 3:活三 4:活四 5:五連 6:眠二 7:純衝四眠三 8:衝四
+#            9:跳活三 10:跳活四 11:偏活跳三 12:跳四 13:偏活三
+#            14:純衝四跳三 15:長連]，0 = 無棋型
 
 
 def _lib_filename():
@@ -134,6 +138,25 @@ def _fillable_to_straight_four(cells):
     return spots
 
 
+def _fillable_to_rush_four(cells):
+    """哪些空格填入後只成衝四（不同時成五，且成五點恰一個）。
+
+    rushPoints：與 threePoints 互斥的三級判準——這格填了不會成活四，
+    只會把威脅推進到「只有一個成五點」的衝四，見 renju-rules.md 的 rp。
+    """
+    spots = set()
+    for i in range(WINDOW):
+        if cells[i] != EMPTY:
+            continue
+        trial = list(cells)
+        trial[i] = SELF
+        if _makes_five(trial):
+            continue
+        if len(_fillable_to_five(trial)) == 1:
+            spots.add(i)
+    return spots
+
+
 def _minor_twin(cells):
     """二級：RIF 未定義，沿用現行的實心二連判法。"""
     if _true_run(cells) != 2:
@@ -160,13 +183,13 @@ def _minor_twin(cells):
 
 
 def classify_window_twin(cells):
-    """獨立實作：11 格窗口 -> 棋型代碼 {0, 2..13}。"""
+    """獨立實作：11 格窗口 -> 棋型代碼 {0, 2..15}。"""
     if cells[CENTER] != SELF:
         return 0
 
     run = _true_run(cells)
     if run >= 6:
-        return 13
+        return 15
     if _makes_five(cells):
         return 5
 
@@ -182,7 +205,11 @@ def classify_window_twin(cells):
         solid = run == 3
         if len(three_spots) >= 2:
             return 3 if solid else 9
-        return 7 if solid else 11
+        return 13 if solid else 11
+
+    rush_spots = _fillable_to_rush_four(cells)
+    if rush_spots:
+        return 7 if run == 3 else 14
 
     return _minor_twin(cells)
 
@@ -239,7 +266,7 @@ def check_line(lib):
     lib.checkLine.argtypes = [
         ctypes.POINTER(board_type),
         ctypes.c_int, ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int * 14),
+        ctypes.POINTER(ctypes.c_int * 16),
     ]
     cy = board_max // 2
 
@@ -259,9 +286,9 @@ def check_line(lib):
                 board[cy][nx] = BLACK
             elif cell == OPP:
                 board[cy][nx] = WHITE
-        my_line = (ctypes.c_int * 14)()
+        my_line = (ctypes.c_int * 16)()
         lib.checkLine(ctypes.byref(board), cx, cy, BLACK, my_line)
-        slots = [i for i in range(14) if my_line[i] != 0]
+        slots = [i for i in range(16) if my_line[i] != 0]
         if not slots:
             return 0
         if len(slots) == 1:
@@ -316,14 +343,14 @@ class TestStep2FullEnumeration:
         )
 
     def test_value_domain(self, classify_c):
-        allowed = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+        allowed = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
         for idx in range(TABLE_SIZE):
             v = classify_c(decode(idx))
             assert v in allowed, f"idx={idx} 回傳非法代碼 {v}"
 
 
 class TestFiveAndOverlineDetection:
-    """回歸守門：穿過中心的實心連續 >= 5 一律判 5 / 13。
+    """回歸守門：穿過中心的實心連續 >= 5 一律判 5 / 15。
 
     曾有的錯誤：有一顆被空格隔開的己方遠子時整組落空回 0，真實成五被
     評為無棋型。五連與長連現在最先判，不受其他棋子干擾。
@@ -338,7 +365,7 @@ class TestFiveAndOverlineDetection:
                 continue
             checked += 1
             got = classify_c(cells)
-            expected = 13 if true_run > 5 else 5
+            expected = 15 if true_run > 5 else 5
             assert got == expected, (
                 f"idx={idx} {render(cells)} trueRun={true_run} "
                 f"classifyWindow={got} 應為 {expected}"
@@ -356,8 +383,8 @@ class TestFiveAndOverlineDetection:
         # ...S.SSSSSS：中心的實六連 + 一顆隔空遠子，仍須認得長連
         cells = list(decode(850))
         assert render(cells) == "...S.SSSSSS"
-        assert classify_c(cells) == 13
-        assert classify_window_twin(cells) == 13
+        assert classify_c(cells) == 15
+        assert classify_window_twin(cells) == 15
 
     def test_four_level_windows_have_a_winning_spot(self, classify_c):
         """獨立佐證：classifyWindow 判為四級（4/8/10/12）的窗口，
@@ -422,7 +449,7 @@ class TestRifInvariants:
         for idx in range(TABLE_SIZE):
             cells = decode(idx)
             code = classify_c(cells)
-            if code in (5, 13):
+            if code in (5, 15):
                 continue   # 已經成五/長連，不再談「差一子」
             spots = spots_completing_five(cells)
             if code in (4, 8, 10, 12):
@@ -441,11 +468,12 @@ class TestRifInvariants:
                 assert len(spots_completing_five(cells)) == 1, render(cells)
 
     def test_three_level_can_reach_a_straight_four(self, classify_c):
-        """三級（3/7/9/11）必有一格填入後成活四；活三與跳活三要有兩格。"""
+        """三級能成活四的分支（3/9/11/13）必有一格填入後成活四；
+        活三與跳活三（3/9）要有兩格，偏活三/偏活跳三（13/11）恰一格。"""
         for idx in range(TABLE_SIZE):
             cells = decode(idx)
             code = classify_c(cells)
-            if code not in (3, 7, 9, 11):
+            if code not in (3, 9, 11, 13):
                 continue
             ways = _fillable_to_straight_four(cells)
             assert ways, f"{render(cells)} 判為三級卻成不了活四"
@@ -454,8 +482,23 @@ class TestRifInvariants:
             else:
                 assert len(ways) == 1, f"{render(cells)} 判為非活三級卻有多種成活四填法"
 
+    def test_chong_only_three_level_cannot_reach_a_straight_four(self, classify_c):
+        """眠三/跳三（7/14）填了只能成衝四，絕不能成活四——這是它們與
+        13/11（偏活三/偏活跳三）唯一的區別：後者仍有一格能成活四。"""
+        for idx in range(TABLE_SIZE):
+            cells = decode(idx)
+            code = classify_c(cells)
+            if code not in (7, 14):
+                continue
+            assert not _fillable_to_straight_four(cells), (
+                f"{render(cells)} 判為眠三/跳三卻仍有填法能成活四"
+            )
+            assert _fillable_to_rush_four(cells), (
+                f"{render(cells)} 判為眠三/跳三卻連衝四都成不了"
+            )
+
     def test_solid_and_jump_split_by_run_length(self, classify_c):
-        """實心與跳型的區分：4/8 與 3/7 是實心，10/12 與 9/11 有缺口。"""
+        """實心與跳型的區分：4/8 與 3/7/13 是實心，10/12 與 9/11/14 有缺口。"""
         for idx in range(TABLE_SIZE):
             cells = decode(idx)
             code = classify_c(cells)
@@ -464,9 +507,9 @@ class TestRifInvariants:
                 assert run == 4, f"{render(cells)} 判為實心四級但 run={run}"
             elif code in (10, 12):
                 assert run != 4, f"{render(cells)} 判為跳四級但 run={run}"
-            elif code in (3, 7):
+            elif code in (3, 7, 13):
                 assert run == 3, f"{render(cells)} 判為實心三級但 run={run}"
-            elif code in (9, 11):
+            elif code in (9, 11, 14):
                 assert run != 3, f"{render(cells)} 判為跳三級但 run={run}"
 
 
@@ -477,19 +520,42 @@ class TestKnownShapes:
     @pytest.mark.parametrize("window,expected", [
         ("OOOSSSSSOOO", 5),    # 恰五
         ("OOOOSSSSSOO", 5),    # 貼牆恰五
-        ("SSSSSSSSSSS", 13),   # 長連
+        ("SSSSSSSSSSS", 15),   # 長連
         ("OOOOSSSS.OO", 8),    # 一端封死，只剩一個成五點 -> 衝四
         ("OOO.SSSS.OO", 4),    # 兩端開，兩個成五點 -> 活四
         ("OOO.SS.SS.O", 12),   # 補中間即成五，只有一個成五點 -> 跳四
         ("....SSS....", 3),    # 兩側空間充足，兩種成活四填法 -> 活三
-        ("...S.SS....", 11),   # 隔空三子，只有一種成活四填法 -> 跳三
-        ("OOO.SSS.OOO", 0),    # 兩側被夾死，成不了活四 -> 無棋型
+        ("...S.SS....", 11),   # 隔空三子，兩端仍開，只有一種成活四填法 -> 偏活跳三
+        ("OOO.SSS.OOO", 7),    # 兩側都只隔一格就是牆，兩個延伸點都只能成衝四 -> 純衝四眠三
         ("OOOO.SS.OOO", 2),    # 二級不走 RIF，沿用現行判法 -> 活二
+        (".....SSSO..", 7),    # 緊貼牆，唯一延伸點只能成衝四 -> 純衝四眠三
+        (".....SSS.O.", 13),   # 隔空一格才被擋，另一端仍能成活四 -> 偏活三
+        ("...OSS.S...", 14),   # 跳三形狀但一端緊貼牆，缺口填了只成衝四 -> 純衝四跳三（曾誤判 0）
     ])
     def test_spot(self, classify_c, window, expected):
         cells = [{"S": SELF, "O": OPP, ".": EMPTY}[ch] for ch in window]
         assert cells[CENTER] == SELF
         assert classify_c(cells) == expected
+
+    def test_locked_solid_three_now_classifies_as_chong_only_mianthree(self, classify_c):
+        """緊貼牆的實心三：唯一延伸點只能成衝四，曾被 threePoints 判成 tp==0
+        後直接落到 classifyMinor 回傳 0（棋型完全消失）。現由 rushPoints 接住，
+        分類成眠三（7），權重應明顯低於偏活三（13）。"""
+        cells = [{"S": SELF, "O": OPP, ".": EMPTY}[ch] for ch in ".....SSSO.."]
+        assert classify_c(cells) == 7
+
+    def test_locked_jump_three_now_classifies_as_chong_only_tiaothree(self, classify_c):
+        """緊貼牆的跳三：唯一的缺口填了只能成衝四（另一端被牆鎖死），
+        曾回傳 0，是 loss-analysis-jump-three-gap.md 記錄的漏防根因之一。
+        現由 rushPoints 接住，分類成跳三（14）。"""
+        cells = [{"S": SELF, "O": OPP, ".": EMPTY}[ch] for ch in "...OSS.S..."]
+        assert classify_c(cells) == 14
+
+    def test_open_jump_three_stays_eleven_not_locked(self, classify_c):
+        """對照組：同一組跳三棋子，兩端都不緊貼牆 -> 仍是偏活跳三（11），
+        缺口填了會變兩端全開的活四，緊急程度跟活三同級，不該與 14 混在一起。"""
+        cells = [{"S": SELF, "O": OPP, ".": EMPTY}[ch] for ch in "....SS.S..."]
+        assert classify_c(cells) == 11
 
     def test_open_three_solid(self, classify_c):
         # ...SSS..... 兩側空間足夠成活四 -> 活三
@@ -510,11 +576,12 @@ class TestKnownShapes:
         assert render(cells) == "...S.SS.S.."
         assert classify_c(cells) == 9
 
-    def test_blocked_three_has_no_pattern(self, classify_c):
-        """兩側被夾死的三連成不了活四，依 RIF 不是三。"""
+    def test_blocked_three_reaches_only_chong_four(self, classify_c):
+        """兩側被夾死的三連成不了活四，依 RIF 不是三——但兩個延伸點都還能
+        成衝四，不是完全沒有棋型；曾誤判回傳 0，現由 rushPoints 接住成眠三。"""
         cells = [OPP, OPP, OPP, EMPTY, SELF, SELF, SELF, EMPTY, OPP, OPP, OPP]
         assert render(cells) == "OOO.SSS.OOO"
-        assert classify_c(cells) == 0
+        assert classify_c(cells) == 7
 
     def test_gap_separated_far_stone_does_not_hide_five(self, classify_c):
         # ....SSSSS.S : 中心的實五 + 一顆隔空遠子（gaps==1），仍須認得五連
@@ -528,7 +595,7 @@ class TestKnownShapes:
 # 把「patternTable 可以取代 maxRunAt」的推導寫成測試
 # --------------------------------------------------------------------------
 # judgeMove 曾經呼叫 maxRunAt 逐格外掃來判五連/長連，現已改成直接讀
-# patternTable 的代碼 5（恰五）與 13（長連，>=6）。這裡證明兩者等價。
+# patternTable 的代碼 5（恰五）與 15（長連，>=6）。這裡證明兩者等價。
 # maxRunAt 本身不刪，留著當參考實作，這裡的測試繼續呼叫它、繼續有意義。
 def solidRun(cells):
     """穿過中心的連續 SELF 長度，與 `_true_run` 各自獨立寫成，供對拍。
@@ -565,7 +632,7 @@ class TestSolidRunTwin:
 
 
 class TestWindowLayerFiveAndOverlineEquivalence:
-    """窗口層全枚舉：`classifyWindow` 的代碼 5/13 等價於 `solidRun` 的 5 / >=6。
+    """窗口層全枚舉：`classifyWindow` 的代碼 5/15 等價於 `solidRun` 的 5 / >=6。
 
     對拍對象是 `classify_c`（即 `classifyWindow`），不是 `classify_window_twin`——
     後者本身也是重寫的推導，這裡要單獨驗證「五連/長連代碼」與「連續子數」
@@ -593,7 +660,7 @@ class TestWindowLayerFiveAndOverlineEquivalence:
             cells = decode(idx)
             code = classify_c(cells)
             run = solidRun(cells)
-            if (code == 13) != (run >= 6):
+            if (code == 15) != (run >= 6):
                 mismatches.append((idx, render(cells), code, run))
         report = "\n".join(
             f"  idx={i:5d} {w}  code={c} solidRun={r}" for i, w, c, r in mismatches[:60]
@@ -630,7 +697,7 @@ def max_run_at(lib):
 
 @pytest.fixture(scope="module")
 def check_line_full(lib):
-    """回傳 check_line_full(board, x, y, player) -> my_line[14] 的 list。
+    """回傳 check_line_full(board, x, y, player) -> my_line[16] 的 list。
 
     跟既有的 `check_line` fixture 不同：這裡吃真正的整個盤面（不是單一窗口
     臨時搭出來的水平線），給板級差分測試用，四個方向都真實參與。
@@ -641,11 +708,11 @@ def check_line_full(lib):
     lib.checkLine.argtypes = [
         ctypes.POINTER(board_type),
         ctypes.c_int, ctypes.c_int, ctypes.c_int,
-        ctypes.POINTER(ctypes.c_int * 14),
+        ctypes.POINTER(ctypes.c_int * 16),
     ]
 
     def _call(board, x, y, player):
-        my_line = (ctypes.c_int * 14)()
+        my_line = (ctypes.c_int * 16)()
         lib.checkLine(ctypes.byref(board), x, y, player, my_line)
         return list(my_line)
 
@@ -765,7 +832,7 @@ class TestBoardLevelMaxRunAtEquivalence:
             f"{len(mismatches)} 筆 hasFive 與 checkLine[5] 不等價:\n{report}"
         )
 
-    def test_overline_run_matches_checkline_slot_thirteen(self, max_run_at, check_line_full, boards):
+    def test_overline_run_matches_checkline_slot_fifteen(self, max_run_at, check_line_full, boards):
         board_max = max_run_at.board_max
         mismatches = []
         for board in boards:
@@ -776,12 +843,12 @@ class TestBoardLevelMaxRunAtEquivalence:
                     for player in (BLACK, WHITE):
                         run, _ = max_run_at(board, x, y, player)
                         my_line = check_line_full(board, x, y, player)
-                        if (run > 5) != (my_line[13] > 0):
-                            mismatches.append((x, y, player, run, my_line[13]))
+                        if (run > 5) != (my_line[15] > 0):
+                            mismatches.append((x, y, player, run, my_line[15]))
         report = "\n".join(
-            f"  x={x} y={y} player={p} run={r} line[13]={l}"
+            f"  x={x} y={y} player={p} run={r} line[15]={l}"
             for x, y, p, r, l in mismatches[:40]
         )
         assert not mismatches, (
-            f"{len(mismatches)} 筆 run>5 與 checkLine[13] 不等價:\n{report}"
+            f"{len(mismatches)} 筆 run>5 與 checkLine[15] 不等價:\n{report}"
         )

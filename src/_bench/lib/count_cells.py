@@ -51,7 +51,7 @@ PROBES = [
 DRIVER = r"""
 #include <stdio.h>
 long cells_read = 0;
-void checkLine(int b[%(bm)d][%(bm)d], int x, int y, int p, int ml[14]);
+void checkLine(int b[%(bm)d][%(bm)d], int x, int y, int p, int ml[16]);
 static int board[%(bm)d][%(bm)d];
 %(idx_protos)s
 
@@ -64,7 +64,7 @@ int main(void) {
         s = s * 1103515245u + 12345u; int y = (s >> 16) %% %(bm)d;
         if (!board[y][x]) { board[y][x] = (placed %% 2) + 1; placed++; }
     }
-    int warm[14] = {0};
+    int warm[16] = {0};
     checkLine(board, %(mid)d, %(mid)d, 1, warm);   /* 查表版首次呼叫要建表，不計入 */
     %(idx_setup)s
 
@@ -73,7 +73,7 @@ int main(void) {
     for (int y = 0; y < %(bm)d; y++)
         for (int x = 0; x < %(bm)d; x++) {
             if (board[y][x]) continue;
-            int ml[14] = {0};
+            int ml[16] = {0};
             checkLine(board, x, y, 1, ml);
             calls++;
         }

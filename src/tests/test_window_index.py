@@ -67,18 +67,34 @@ MIDGAME = [
 
 @pytest.fixture(scope="module")
 def debug_dll():
-    """編譯一顆帶 WINDOW_IDX_CHECK 的 debug DLL，回傳路徑。"""
+    """編譯一顆帶 WINDOW_IDX_CHECK 的 debug DLL，回傳路徑。
+
+    輸出檔名帶 PID，不覆寫舊路徑：子行程用 ctypes.CDLL 載入過的 DLL，
+    Windows 有時不會在行程結束當下就釋放檔案 handle，若沿用同一個檔名，
+    下一次（甚至下一輪 pytest）gcc 覆寫時會因為目標檔案仍被鎖住而連結
+    失敗——mingw 的 gcc 前端這種失敗不一定會印 stderr，只回傳非零。
+    """
     os.makedirs(DEBUG_DIR, exist_ok=True)
-    out_path = os.path.join(DEBUG_DIR, _lib_filename("debug"))
+    out_path = os.path.join(DEBUG_DIR, _lib_filename(f"debug_{os.getpid()}"))
     src_path = os.path.join(SRC_DIR, "ai.c")
-    result = subprocess.run(
-        [GCC, "-shared", "-o", out_path, "-fPIC", "-DWINDOW_IDX_CHECK", src_path],
-        capture_output=True, text=True,
-    )
+    try:
+        result = subprocess.run(
+            [GCC, "-shared", "-o", out_path, "-fPIC", "-DWINDOW_IDX_CHECK", src_path],
+            capture_output=True, text=True,
+        )
+    except OSError as e:
+        pytest.fail(f"debug DLL 編譯無法啟動 gcc：{e!r}\nGCC={GCC!r} out_path={out_path!r}")
     if result.returncode != 0:
-        pytest.fail(f"debug DLL 編譯失敗:\n{result.stderr}")
+        pytest.fail(
+            f"debug DLL 編譯失敗 (returncode={result.returncode})\n"
+            f"stdout:\n{result.stdout!r}\nstderr:\n{result.stderr!r}\n"
+            f"GCC={GCC!r} out_path={out_path!r} exists={os.path.exists(out_path)}"
+        )
     yield out_path
-    shutil.rmtree(DEBUG_DIR, ignore_errors=True)
+    try:
+        os.remove(out_path)
+    except OSError:
+        pass   # 子行程可能還沒釋放 handle，留給下次帶新 PID 的 fixture 或人工清理
 
 
 # 子行程驅動程式：載入指定 DLL，把 offsets 佈到盤面，然後跑一次 aiRound
@@ -132,13 +148,19 @@ _DRIVER = textwrap.dedent(r"""
 
 
 def _run_driver(dll_path, mode, offsets, player):
-    driver_path = os.path.join(DEBUG_DIR, "_driver.py")
+    driver_path = os.path.join(DEBUG_DIR, f"_driver_{os.getpid()}.py")
     with open(driver_path, "w", encoding="utf-8") as f:
         f.write(_DRIVER)
-    return subprocess.run(
-        [sys.executable, driver_path, dll_path, mode, repr(offsets), str(player)],
-        capture_output=True, text=True, timeout=120,
-    )
+    try:
+        return subprocess.run(
+            [sys.executable, driver_path, dll_path, mode, repr(offsets), str(player)],
+            capture_output=True, text=True, timeout=120,
+        )
+    finally:
+        try:
+            os.remove(driver_path)
+        except OSError:
+            pass
 
 
 class TestInvariantHoldsOnRealSearches:

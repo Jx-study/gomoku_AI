@@ -16,7 +16,7 @@
 區間視角推導，兩者結構不同，避免犯同一個錯。
 
 需要先編譯共享庫：
-    cd src && gcc -shared -o ai.dll -fPIC ai.c
+    cd src && gcc -shared -o ai.dll -fPIC zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c
 找不到時整個模組會被 skip。
 """
 import ctypes
@@ -54,7 +54,7 @@ LIB_PATH = os.path.join(SRC_DIR, _lib_filename())
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(LIB_PATH),
-    reason=f"{_lib_filename()} 未編譯；先執行 gcc -shared -o ai.dll -fPIC ai.c",
+    reason=f"{_lib_filename()} 未編譯；先執行 gcc -shared -o ai.dll -fPIC zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c",
 )
 
 

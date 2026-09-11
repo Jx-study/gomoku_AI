@@ -6,7 +6,7 @@
 現由 quickEvaluate 開頭的 `judgeMove(...) == 2` 短路處理。
 
 需要先編譯共享庫：
-    cd src && gcc -shared -o ai.dll -fPIC ai.c
+    cd src && gcc -shared -o ai.dll -fPIC zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c
 找不到時整個模組會被 skip。
 """
 import ctypes
@@ -34,7 +34,7 @@ LIB_PATH = os.path.join(SRC_DIR, _lib_filename())
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(LIB_PATH),
-    reason=f"{_lib_filename()} 未編譯；先執行 gcc -shared -o ai.dll -fPIC ai.c",
+    reason=f"{_lib_filename()} 未編譯；先執行 gcc -shared -o ai.dll -fPIC zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c",
 )
 
 # 活四在 quickEvaluate 的 attack 權重；成五點必須明顯高過它

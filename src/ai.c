@@ -366,6 +366,20 @@ static int threePoints(int cells[11]) {
     return n;
 }
 
+// 眠三/跳三專用：能再加一子成衝四（不同時成五、也不同時成活四）的格數
+// 與 threePoints 互斥（同一格只會落在成五點=2 或=1 其中一類），量的是
+// 「這個三連唯一能推進的方向只剩衝四」——延伸方向已被鎖死的訊號
+static int rushPoints(int cells[11]) {
+    int n = 0;
+    for (int i = 0; i < 11; i++) {
+        if (cells[i] != CELL_EMPTY) continue;
+        cells[i] = CELL_SELF;
+        if (!makesFive(cells) && fivePoints(cells) == 1) n++;
+        cells[i] = CELL_EMPTY;
+    }
+    return n;
+}
+
 // 二：RIF 未定義的殘留棋型，靠兩端是否被封區分活二與眠二
 // 只認實心二連，且兩端外側不得再有隔空的己方子（那屬於更強的棋型，已被前面分支處理）
 static int classifyMinor(int cells[11]) {
@@ -388,13 +402,13 @@ static int classifyMinor(int cells[11]) {
     return 0;
 }
 
-// [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
+// [0:0, 1:0, 2:活二，3:活三，4:活四，5:五連，6:眠二，7:純衝四眠三，8:衝四，9:跳活三，10:跳活四，11:偏活跳三，12:跳四，13:偏活三，14:純衝四跳三，15:長連]
 /* 回傳中心（cells[5] 為 SELF）在此 11 格窗口形成的最強棋型 index，無棋型回傳 0 */
 int classifyWindow(int cells[11]) {
     if (cells[5] != CELL_SELF) return 0;   // 建表恆為 SELF，這道防護給外部直接呼叫用
 
     int run = solidRun(cells);
-    if (run >= 6) return 13;               // 長連
+    if (run >= 6) return 15;               // 長連
     if (makesFive(cells)) return 5;        // 五連
 
     // 四級與三級依 RIF 定義推導，牆與敵子都不是 EMPTY，成五點自然數不到
@@ -404,11 +418,16 @@ int classifyWindow(int cells[11]) {
         return fp >= 2 ? 10 : 12;                  // 跳活四、跳四
     }
 
+    // tp>=1 代表還有方向能成活四，緊急程度與活四同級，不受延伸方向鎖死與否影響
     int tp = threePoints(cells);
     if (tp > 0) {
-        if (run == 3) return tp >= 2 ? 3 : 7;      // 活三、眠三
-        return tp >= 2 ? 9 : 11;                   // 跳活三、跳三
+        if (run == 3) return tp >= 2 ? 3 : 13;     // 活三、偏活三
+        return tp >= 2 ? 9 : 11;                   // 跳活三、偏活跳三
     }
+
+    // tp==0：不能成活四，但仍能成衝四代表延伸方向已被鎖死一端，
+    // 只是個預先可防守的單點威脅，見 Note/technical/renju-rules.md
+    if (rushPoints(cells) > 0) return run == 3 ? 7 : 14;   // 眠三、跳三
 
     return classifyMinor(cells);
 }
@@ -441,7 +460,7 @@ static void ensurePatternTable(void) {
 
 // 檢查該位置落子后的連綫數
 // 四個方向各查一次棋型表，命中的棋型 index 累加進 my_line
-void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[14]) {
+void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[16]) {
     ensurePatternTable();
 
     int dx[] = {1, 1, 0, -1};   // 水平、垂直、主對角線、副對角線
@@ -458,7 +477,7 @@ void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my
 // 計算棋盤自己和對手的縂連綫數量
 // 搜索期間每顆棋子必落在 box 內，box 篩不掉任何一顆，idxValid 時改走 stoneList，
 // 掃描路徑留給 checkUnValid 從 Python 進來的冷路徑（idxValid 為 false）
-void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[14]) {
+void checkNow(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int player, int my_now[16]) {
     if (idxValid) {
         int p = player - 1;
         for (int i = 0; i < stoneCount[p]; i++) {
@@ -515,18 +534,20 @@ int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *has
          -3/-4/-6 = 黑棋禁手（三三/四四/長連） */
 int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     if (board[y][x] != 0) return 0;
-    int line[14] = {0};
+    int line[16] = {0};
     checkLine(board, x, y, player, line);
     if (line[5] > 0) return 2;                       // 五連即勝，優先於一切禁手
-    if (line[13] > 0) return player == 2 ? 2 : -6;   // 長連只對白棋算勝
+    if (line[15] > 0) return player == 2 ? 2 : -6;   // 長連只對白棋算勝
     if (player == 1) {
+        // 三三只認活三/跳活三（tp>=2，兩個方向都能成活四）；偏活三/偏活跳三
+        // （13/11，tp==1，只有一個方向能成活四）不算，只用於評分權重
         if ((line[3] + line[9]) >= 2) return -3;
         if ((line[4] + line[8] + line[10] + line[12]) >= 2) return -4;
     }
     return 1;
 }
 
-// 直接查 patternTable 四個方向，索引與 checkLine 一致，但跳過 line[14] 的清零與累加，只認 5、13 兩個代碼
+// 直接查 patternTable 四個方向，索引與 checkLine 一致，但跳過 line[16] 的清零與累加，只認 5、15 兩個代碼
 // 語意須與 judgeMove 逐項對得上：成五與白棋長連 true，黑棋長連與其餘一律 false
 static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     ensurePatternTable();
@@ -539,7 +560,7 @@ static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
                             : encodeWindow(board, x, y, dx[i], dy[i], player);
         int code = patternTable[idx];
         if (code == 5) return true;
-        if (code == 13 && player == 2) return true;
+        if (code == 15 && player == 2) return true;
     }
     return false;
 }
@@ -555,8 +576,8 @@ int checkUnValid(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
 int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int maxX, int minY, int maxY,int player) {
     // 根据进攻和防守策略评估位置的函数
     int total_score = 0, attack = 0, defence = 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-    int my_line[14] = {0}, op_line[14] = {0}; // 该位置落子后，自己和对手的连线数
+    // [0:0, 1:0, 2:活二，3:活三，4:活四，5:五連，6:眠二，7:純衝四眠三，8:衝四，9:跳活三，10:跳活四，11:偏活跳三，12:跳四，13:偏活三，14:純衝四跳三，15:長連]
+    int my_line[16] = {0}, op_line[16] = {0}; // 该位置落子后，自己和对手的连线数
 
     // 成五直接給最高分，與 judgeMove 共用同一套判定
     // 勝著不必再經棋型分類，也避免這類點被 score != 0 濾掉
@@ -567,6 +588,9 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
     checkLine(board, x, y, 3-player, op_line);
 
     // 進攻策略 - 提升關鍵連線得分，特別是活四、衝四、跳四
+    // 偏活三/偏活跳三（13/11）緊急程度與跳活三同級：缺口一旦填上就是
+    // 兩端全開的活四，不是弱棋型；純衝四眠三/跳三（7/14）延伸方向已鎖死，
+    // 只是預先可防守的單點威脅，權重明顯低於 11/13
     attack   += 1000000 * my_line[5] +  // 五連
                 100000  * my_line[4] +  // 活四
                 20000   * my_line[10]+  // 跳活四
@@ -574,14 +598,16 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 7000    * my_line[12]+  // 跳四
                 8000    * my_line[3] +  // 活三
                 4000    * my_line[9] +  // 跳活三
-                500     * my_line[7] +  // 眠三
-                700     * my_line[11]+  // 跳三
+                4000    * my_line[13]+  // 偏活三
+                4000    * my_line[11]+  // 偏活跳三
+                700     * my_line[14]+  // 純衝四跳三
+                500     * my_line[7] +  // 純衝四眠三
                 50      * my_line[2] +  // 活二
                 10      * my_line[6];   // 眠二
 
     // 四三解禁策略，若當前形成威脅可以加大進攻分數
-    if (player == 1 && (my_line[3] > 0 || my_line[7]>0 || my_line[9]>0|| my_line[11]>0) && (my_line[4] > 0 ||my_line[8] > 0 ||my_line[10]>0||my_line[12]>0)) { 
-        attack += 500000;  
+    if (player == 1 && (my_line[3] > 0 || my_line[7]>0 || my_line[9]>0 || my_line[11]>0 || my_line[13]>0 || my_line[14]>0) && (my_line[4] > 0 ||my_line[8] > 0 ||my_line[10]>0||my_line[12]>0)) {
+        attack += 500000;
     }
 
     // 防守策略 - 防守時同樣拉大連線得分差距，尤其是活四、衝四等關鍵連線
@@ -592,8 +618,10 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
                 7000    * op_line[12]+  // 跳四
                 8000    * op_line[3] +  // 活三
                 4000    * op_line[9] +  // 跳活三
-                500     * op_line[7] +  // 眠三
-                700     * op_line[11] + // 跳三
+                4000    * op_line[13]+  // 偏活三
+                4000    * op_line[11]+  // 偏活跳三
+                700     * op_line[14]+  // 純衝四跳三
+                500     * op_line[7] +  // 純衝四眠三
                 50      * op_line[2] +  // 活二
                 10      * op_line[6];   // 眠二
 
@@ -610,23 +638,27 @@ int quickEvaluate(int board[BOARD_MAX][BOARD_MAX], int x, int y, int minX, int m
 int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY,int player) {
     // 初始化總分(避免劣勢時全部都是負分無法計算)、自己與對手的分數
     int total_score = 12000, attack = 0, defence = 0;
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四, 13:長連]
-    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    // [0:0, 1:0, 2:活二，3:活三，4:活四，5:五連，6:眠二，7:純衝四眠三，8:衝四，
+    //  9:跳活三，10:跳活四，11:偏活跳三，12:跳四，13:偏活三，14:純衝四跳三，15:長連]
+    int my_now[16] = {0}, op_now[16] = {0}; // 目前自己和对手的连线数
 
     // 更新
     checkNow(board, minX, maxX, minY,  maxY, player, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - player, op_now);
     // 優先級：五連>活四>跳活四>衝四=活三>跳四>
-    // 進攻策略
+    // 進攻策略：偏活三/偏活跳三（13/11）與跳活三同級，純衝四眠三/跳三（7/14）
+    // 延伸方向已鎖死，權重明顯低於 11/13（見 quickEvaluate 上方註解）
     attack   += 9999999 * (my_now[5]/5) +   // 五連
                 20000   * (my_now[4]/4) +   // 活四
                 15000   * (my_now[10]/4)+   // 跳活四
                 10000   * (my_now[8]/4) +   // 衝四
                 10000   * (my_now[12]/4)+   // 跳四
                 7000    * (my_now[3]/3) +   // 活三
-                4000    * (my_now[9]/3) +  // 跳活三
-                2000    * (my_now[11]/3) +  // 跳三
-                500     * (my_now[7]/3) +   // 眠三
+                4000    * (my_now[9]/3) +   // 跳活三
+                4000    * (my_now[13]/3)+   // 偏活三
+                4000    * (my_now[11]/3)+   // 偏活跳三
+                500     * (my_now[7]/3) +   // 純衝四眠三
+                700     * (my_now[14]/3)+   // 純衝四跳三
                 20      * (my_now[2]/2) +   // 活二
                 5       * (my_now[6]/2);    // 眠二
 
@@ -637,36 +669,42 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
                 10000   * (op_now[8]/4) +   // 衝四
                 10000   * (op_now[12]/4)+   // 跳四
                 7000    * (op_now[3]/3) +   // 活三
-                4000    * (op_now[9]/3) +  // 跳活三
-                2000    * (op_now[11]/3) +  // 跳三
-                500     * (op_now[7]/3) +   // 眠三
+                4000    * (op_now[9]/3) +   // 跳活三
+                4000    * (op_now[13]/3)+   // 偏活三
+                4000    * (op_now[11]/3)+   // 偏活跳三
+                500     * (op_now[7]/3) +   // 純衝四眠三
+                700     * (op_now[14]/3)+   // 純衝四跳三
                 20      * (op_now[2]/2) +   // 活二
                 5       * (op_now[6]/2);    // 眠二
     
     // 若對手已經有活四(有可能是未來)，可是我沒有活四/衝四(非常危險-->幾乎沒救了)
     if (op_now[4] > 0 && (my_now[4] == 0 && my_now[8] == 0)) {
         if (my_now[5] == 0)
-            defence += 4000; 
+            defence += 4000;
     }
     // 若對手已經有衝四(有可能是未來)，可是我沒有活四/衝四(危險)
     else if ((op_now[8] > 0) && (my_now[4] == 0 && my_now[8] == 0)) {
         if (my_now[5] == 0)
             defence += 900;
-    }// 若對手已經有活三(有可能是未來)，可是我沒有活三或以上的(危險)
-    else if ((op_now[3] > 0) && (my_now[3] == 0)) {
+    }// 若對手已經有活三/偏活三/偏活跳三(能成活四)，可是我沒有活三或以上的(危險)
+    else if ((op_now[3] > 0 || op_now[9] > 0 || op_now[13] > 0 || op_now[11] > 0) &&
+             (my_now[3] == 0 && my_now[9] == 0 && my_now[13] == 0 && my_now[11] == 0)) {
         if (my_now[4] == 0 && my_now[8] == 0){
             if(my_now[5] == 0)
                 defence += 1000;
-        }    
-    }// 若對手已經有眠三(有可能是未來)，可是我沒有眠三以上的
-    else if ((op_now[7] > 0) && (my_now[7] == 0 && my_now[3] == 0)) {
+        }
+    }// 若對手已經有純衝四眠三/跳三(只鎖死方向，延伸方向已定型)，可是我沒有同級以上的
+    else if ((op_now[7] > 0 || op_now[14] > 0) &&
+             (my_now[7] == 0 && my_now[14] == 0 &&
+              my_now[3] == 0 && my_now[9] == 0 && my_now[13] == 0 && my_now[11] == 0)) {
         if (my_now[4] == 0 && my_now[8] == 0){
             if(my_now[5] == 0)
                 defence += 100;
-        }    
+        }
     }
-    if((op_now[3]>0 || op_now[9]>0) && (op_now[4]>0 ||op_now[8]>0 || op_now[10]>0)){
-        defence += 4000; 
+    if((op_now[3]>0 || op_now[9]>0 || op_now[13]>0 || op_now[11]>0) &&
+       (op_now[4]>0 || op_now[8]>0 || op_now[10]>0)){
+        defence += 4000;
     }
 
     // 計算（整數運算：避免浮點轉換的精度損耗）
@@ -684,13 +722,13 @@ int evaluate(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int 
 
 // 檢查是否有人勝利
 int checkWin(int board[BOARD_MAX][BOARD_MAX], int minX, int maxX, int minY, int maxY, int currentPlayer) {
-    int my_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}, op_now[14] = {0,0,0,0,0,0,0,0,0,0,0,0,0}; // 目前自己和对手的连线数 
+    int my_now[16] = {0}, op_now[16] = {0}; // 目前自己和对手的连线数
     checkNow(board, minX, maxX, minY,  maxY, currentPlayer, my_now);
     checkNow(board, minX, maxX, minY,  maxY, 3 - currentPlayer, op_now);
-    
+
     // 若有一方玩家赢了
-    if((currentPlayer == 2 && my_now[13]>0) ||my_now[5]>0) return currentPlayer;
-    else if((3 - currentPlayer == 2 && op_now[13]>0) || op_now[5]>0) return 3-currentPlayer;
+    if((currentPlayer == 2 && my_now[15]>0) ||my_now[5]>0) return currentPlayer;
+    else if((3 - currentPlayer == 2 && op_now[15]>0) || op_now[5]>0) return 3-currentPlayer;
     else return 0; // 没有玩家赢
 }
 
@@ -787,7 +825,7 @@ static int listFourMoves(int board[BOARD_MAX][BOARD_MAX], int player, Move *move
                 moves[n++] = (Move){x, y, 1000000};
                 continue;
             }
-            int line[14] = {0};
+            int line[16] = {0};
             checkLine(board, x, y, player, line);
             if (line[4] || line[10])      moves[n++] = (Move){x, y, 100000};  // 活四
             else if (line[8] || line[12]) moves[n++] = (Move){x, y, 10000};   // 衝四
@@ -896,15 +934,15 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     *count = 0;
 
     // 統計當前AI和玩家的棋形數
-    int my_now[14] = {0}, op_now[14] = {0};
+    int my_now[16] = {0}, op_now[16] = {0};
     checkNow(board, minX, maxX, minY, maxY, player, my_now);
     checkNow(board, minX, maxX, minY, maxY, 3 - player, op_now);
 
     // 成五點存在的充要條件：該方有四。任何成五點的窗口裡都有四顆同色，
     // 那四顆各自為中心必被分類成活四/沖四/跳活四/跳四之一
     // 併入五連與長連：根節點不經 checkWin，盤上已成五時 endGame 仍須掃
-    bool selfCanFive = (my_now[4] + my_now[5] + my_now[8] + my_now[10] + my_now[12] + my_now[13]) > 0;
-    bool oppCanFive  = (op_now[4] + op_now[5] + op_now[8] + op_now[10] + op_now[12] + op_now[13]) > 0;
+    bool selfCanFive = (my_now[4] + my_now[5] + my_now[8] + my_now[10] + my_now[12] + my_now[15]) > 0;
+    bool oppCanFive  = (op_now[4] + op_now[5] + op_now[8] + op_now[10] + op_now[12] + op_now[15]) > 0;
 
     // 最高優先級：檢查是否有立即獲勝的棋路
     int bestX = -1, bestY = -1;
@@ -914,8 +952,12 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     }
 
     // 策略：條件+分數+檢查對象
-    // [0:0, 1:0, 2:活二，3:活三，4:活四， 5:五連，6:眠二，7:眠三，8:衝四，9:跳活三, 10:跳活四, 11:跳三, 12:跳四]
+    // [0:0, 1:0, 2:活二，3:活三，4:活四，5:五連，6:眠二，7:純衝四眠三，8:衝四，
+    //  9:跳活三，10:跳活四，11:偏活跳三，12:跳四，13:偏活三，14:純衝四跳三，15:長連]
     // 優先級：五連>活四>跳活四>衝四=活三>跳四>....
+    // 3/9/11/13 都能成活四（RIF 的 Three），威脅同級，防守/進攻觸發條件必須一併涵蓋
+    // 曾經漏掉 11：只認 3/9 讓兩端仍開放的跳三（見 loss-analysis-jump-three-gap.md）
+    // 從未進入候選列表，AI 因此漏防、輸掉一局
     struct {
         bool condition;
         int score;
@@ -923,29 +965,29 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     } strategy_moves[] = {
         // 次優先級：對手已有兩個三連綫/23連綫，且自己沒有活三以上的連綫（防守)
         {
-            op_now[2] > 0 && (op_now[3]+op_now[7]+op_now[9]+op_now[11])/3 >= 1,
+            op_now[2] > 0 && (op_now[3]+op_now[7]+op_now[9]+op_now[11]+op_now[13]+op_now[14])/3 >= 1,
             99999,
             3 - player  // 檢查對手
         },
-        
-        // 第三優先級：若自己已經有活三/跳活三必勝了,且對手沒有活三以上的連綫（進攻）
+
+        // 第三優先級：若自己已經有活三/跳活三/偏活三/偏活跳三必勝了,且對手沒有活三以上的連綫（進攻）
         {
-            (my_now[3] > 0 || my_now[9] > 0) && 
+            (my_now[3] > 0 || my_now[9] > 0 || my_now[13] > 0 || my_now[11] > 0) &&
             op_now[4] == 0 && op_now[8] == 0 && op_now[10] == 0,
             100000,
             player  // 檢查自己
         },
-        
-        // 第四優先級：對手已有活三/活跳三，且自己沒有活三以上的連綫（防守）
+
+        // 第四優先級：對手已有活三/跳活三/偏活三/偏活跳三，且自己沒有活三以上的連綫（防守）
         {
-            (op_now[3] > 0 || op_now[9] > 0) && 
+            (op_now[3] > 0 || op_now[9] > 0 || op_now[13] > 0 || op_now[11] > 0) &&
             my_now[3] == 0 && my_now[4] == 0 && my_now[8] == 0 && my_now[10] == 0,
             88888,
             3 - player  // 檢查對手
         },
-        // 第五優先級：無腦衝四
+        // 第五優先級：無腦衝四（純衝四眠三/跳三只能推進到衝四，主動推進不虧）
         {
-            my_now[7]>0 || my_now[11]>0,
+            my_now[7]>0 || my_now[14]>0,
             66666,
             player      // 檢查自己
         }
@@ -964,14 +1006,14 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
                 if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
 
                 // 检查位置的棋型
-                int line[14] = {0};
+                int line[16] = {0};
                 checkLine(board, x, y, strategy_moves[strategy].check_player, line);
-                
+
                 bool valid_move = false;
                 switch (strategy) {
                     // 防御多重威胁线
                     case 0:
-                        valid_move = (line[3] + line[7] + line[9] + line[11]) >= 1 && 
+                        valid_move = (line[3] + line[7] + line[9] + line[11] + line[13] + line[14]) >= 1 &&
                                    (line[4] + line[8] + line[10] + line[12]) >= 1;
                         break;
                     // 主动创建活四

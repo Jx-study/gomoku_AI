@@ -156,6 +156,51 @@ class TestBlackDoubleThree:
         assert is_legal(judge(stones, 2, 7))
 
 
+class TestWallLimitsThree:
+    """牆讓貼邊的實心三成不了活四，依 RIF 不算三，不該湊成三三。
+
+    RIF 的三是功能定義：「能再加一子成為活四」。活四又要求「兩個不同
+    的成五點」。落子點在 x=1、黑子在 x=2,3 時，三子貼著左牆，
+    往左只剩 x=0 一格，補滿後左端出界、只有一個成五點，是四不是活四，
+    所以原形不構成三。同一形狀離開牆邊時兩端都能延伸，才是三。
+    """
+
+    def _shapes(self, x):
+        """回傳（水平三子中的兩顆, 垂直三子中的兩顆）。落子點為 (x, 7)。"""
+        return ([(x + 1, 7, BLACK), (x + 2, 7, BLACK)],
+                [(x, 6, BLACK), (x, 8, BLACK)])
+
+    def test_center_double_open_three_forbidden(self, judge):
+        """對照組：同一形狀在盤面中央，兩側都有空間 -> 三三禁手。"""
+        horizontal, vertical = self._shapes(5)
+        assert not is_legal(judge(horizontal + vertical, 5, 7))
+
+    def test_edge_three_is_not_a_three(self, judge):
+        """貼左牆的同一形狀。左端空間不足以成活四，不算三 -> 合法。"""
+        horizontal, vertical = self._shapes(1)
+        assert is_legal(judge(horizontal + vertical, 1, 7))
+
+
+class TestWallDoesNotHideFour:
+    """牆不得讓衝四整個消失——四四加總認 line[12]，漏判就會放行四四。
+
+    形狀 1011 後接白子：填滿缺口即成五，依 RIF 是四。牆封住的是背面那端，
+    成五點仍在，所以它仍是四——四只需要一個成五點，這點與三不同。
+    """
+
+    def test_center_four_with_blocked_far_end_counts(self, judge):
+        """對照組：同形狀在中央，背面是空格 -> 判為跳四，湊成四四。"""
+        stones = line(7, [7, 8, 9], BLACK) + [(10, 7, WHITE)]
+        stones += line(5, [7, 8, 9], BLACK, horizontal=False) + [(5, 10, WHITE)]
+        assert not is_legal(judge(stones, 5, 7))
+
+    def test_edge_four_with_blocked_far_end_counts(self, judge):
+        """貼牆的同形狀。牆封住的是背面，成五點仍在，依 RIF 仍是四。"""
+        stones = line(7, [2, 3, 4], BLACK) + [(5, 7, WHITE)]
+        stones += line(0, [9, 10, 11], BLACK, horizontal=False) + [(0, 12, WHITE)]
+        assert not is_legal(judge(stones, 0, 7))
+
+
 class TestBlackDoubleFour:
     def test_double_four_forbidden(self, judge):
         stones = [(4, 7, BLACK), (5, 7, BLACK), (6, 7, BLACK),
@@ -222,7 +267,7 @@ class TestBlackOverline:
 
         盤面與 test_six_by_filling_gap 的其他構型完全等價（同樣是連續
         六子）。曾因 checkLine 的棋型分類漏判而判成合法，現由
-        judgeMove 直接數連續長度（maxRunAt）處理。
+        judgeMove 經 checkLine 查 patternTable 的長連碼（13）處理。
         """
         stones = line(7, [3, 4, 5, 6], BLACK) + line(7, [8], BLACK)
         assert not is_legal(judge(stones, 7, 7))
@@ -248,7 +293,7 @@ class TestFiveDetectionIgnoresShape:
     checkLine 的 gaps == 1 分支只處理 count 為 3、4 的情形。當落子點
     隔一格外還有己方棋子時 count >= 5，所有子條件皆落空、回傳全零，
     於是「明明成五」被判成普通著法——AI 因此漏擋而輸棋。
-    現改由 maxRunAt 直接數連續長度。
+    現改由 checkLine 查 patternTable 的恰好五連碼（5）判定。
     """
 
     WIN = 2
@@ -289,7 +334,8 @@ class TestFiveDetectionIgnoresShape:
         """五連優先於禁手：水平恰好五連、垂直長連時，黑棋勝而非長連禁手。
 
         只取四個方向的最長連續長度會讓垂直的七連蓋過水平的五連，
-        因此 maxRunAt 另外回報「有無任一方向恰好五連」。
+        因此 patternTable 把恰好五連（碼 5）與長連（碼 13）分開編碼，
+        由 checkLine 逐方向讀取，不會互相蓋過。
         """
         stones = (line(7, [8, 9, 10, 11], BLACK)
                   + [(7, y, BLACK) for y in (4, 5, 6, 8, 9, 10)])

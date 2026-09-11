@@ -1,18 +1,16 @@
-"""
-效能對比腳本：比較優化前（baseline, commit 45464c3）與優化後（optimized, Task1-3）
-的 aiRound() 思考時間。
+"""熱點量測：各函數在單手 aiRound() 裡被呼叫幾次、耗時多久。
 
-用法:
-    cd src/_bench
-    python benchmark_ai.py
+由 bench.py hotspots 呼叫 profile_hotspots()，插樁版的生成、編譯與刪除都在那裡。
 
-需要先準備好 ai_baseline.dll 與 ai_optimized.dll（放在本目錄下，或用參數指定路徑）：
-    gcc -shared -o ai_baseline.dll -fPIC ai_baseline.c
-    gcc -shared -o ai_optimized.dll -fPIC ai_optimized.c
+檔案裡另有 bench_dll() 與 bench_repeated_position() 兩個早期的兩版計時對比，
+以及呼叫它們的 __main__ 區塊。走法與速度對比現在用 bench.py moves，
+__main__ 的預設路徑指向已刪除的 ai_baseline.dll / ai_optimized.dll。
 """
 import ctypes
 import time
 import sys
+
+import positions
 
 # 棋盤大小由 dll 的 getBoardMax() 決定（ai.c 是唯一定義處），首次 bind_lib() 時填入
 BOARD_MAX = None
@@ -65,35 +63,12 @@ def play(moves):
     return board
 
 
-# 基礎中局走法序列，以中心點的偏移表示（換棋盤大小不必重寫座標）
-BASE_OFFSETS = [
-    (0, 0, 1), (0, 1, 2), (1, 1, 1), (-1, -1, 2),
-    (2, 2, 1), (-1, 1, 2), (-2, -2, 1), (1, -1, 2),
-    (3, 3, 1), (-2, 2, 2), (1, 2, 1), (0, 2, 2),
-    (2, 0, 1), (3, -1, 2),
-]
-
-EXTRA_OFFSETS = [
-    (4, -2, 1), (-3, 3, 2), (-1, -2, 1), (2, -2, 2),
-    (5, -3, 1), (-4, 4, 2), (0, -2, 1), (1, -2, 2),
-    (-2, 0, 1), (4, 2, 2), (-3, -3, 1), (5, 5, 2),
-]
-
-
 def scenarios():
-    """5 個「不同」盤面（同一開局，逐步加深），避免同盤面重複呼叫造成置換表
-    命中而失真——每個都只測一次（冷快取），比較接近真實對局中每手都不同盤面的情況。
+    """量測用的盤面，定義在 positions.py（與 bench.py budget 同一組）。
 
     需要先呼叫過 bind_lib()，否則不知道棋盤中心在哪。
     """
-    c = BOARD_MAX // 2
-    base = [(c + dx, c + dy, p) for dx, dy, p in BASE_OFFSETS]
-    extra = [(c + dx, c + dy, p) for dx, dy, p in EXTRA_OFFSETS]
-    out = []
-    for i in range(0, len(extra) + 1, 4):
-        moves = base + extra[:i]
-        out.append((f"{len(moves)} stones", moves))
-    return out
+    return positions.suite(BOARD_MAX)
 
 
 def bench_dll(dll_path, label):
@@ -141,6 +116,9 @@ def bench_repeated_position(dll_path, label, repeats=3):
         print(f"  call {r+1}: {t1 - t0:.3f}s")
 
 
+# 呼叫數超過這個量級的函數，秒數會被插樁開銷蓋過（見 profile_hotspots）
+PROF_NOISY_CALLS = 100_000
+
 # 插樁的函數：(顯示名, 計數器符號, 取秒數的函數名或 None)
 PROFILED = [
     ("miniMax",       "g_miniMaxCalls",       None),
@@ -151,20 +129,23 @@ PROFILED = [
     ("checkWin",      "g_checkWinCalls",      "getCheckWinSeconds"),
     ("checkLine",     "g_checkLineCalls",     "getCheckLineSeconds"),
     ("judgeMove",     "g_judgeMoveCalls",     "getJudgeMoveSeconds"),
+    ("hasAdjacent",   "g_hasAdjacentCalls",   "getHasAdjacentSeconds"),
+    ("maxRunAt",      "g_maxRunAtCalls",      "getMaxRunAtSeconds"),
 ]
 
 
 def profile_hotspots(dll_path="./ai_profiled.dll"):
     """量測各函數佔 aiRound 單手耗時的比例（需要 ai_profiled.dll）。
 
-    先跑：python gen_profiled.py && gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c
+    整套流程由 `python bench.py hotspots` 代跑（生成、編譯、量測、刪掉生成物）。
 
     這些秒數是 inclusive 且互相巢狀的（checkLine 被 evaluate/sortMoves/endGame 呼叫），
     所以不能相加當 100%。每一行各自讀作「該函數的總耗時佔這一手的比例」。
     miniMax 是遞迴的，inclusive 時間等於整次搜索，因此只計次不計時。
 
-    呼叫次數極高的函數（checkLine、judgeMove）的佔比含計時本身的開銷，會偏高。
-    排名可信，絕對數字不可信。
+    標了 * 的列（呼叫數超過 PROF_NOISY_CALLS）秒數不能用：checkLine 這類函數現在
+    只有幾次陣列存取，一對 QueryPerformanceCounter 比它包住的函數還貴。
+    這些列只讀呼叫數，工作量改用 bench.py budget。
     """
     lib = bind_lib(dll_path)
     lib.resetProfileCounters.restype = None
@@ -188,14 +169,19 @@ def profile_hotspots(dll_path="./ai_profiled.dll"):
 
         print(f"\n  {name}: wall={wall:.3f}s")
         print(f"    {'function':<14}{'calls':>12}{'seconds':>10}{'share':>9}")
+        noisy = False
         for fname, counter, getter in PROFILED:
             calls = ctypes.c_longlong.in_dll(lib, counter).value
+            mark = "*" if calls > PROF_NOISY_CALLS else " "
+            noisy = noisy or mark == "*"
             if getter:
                 sec = getattr(lib, getter)()
                 share = (sec / wall * 100) if wall > 0 else 0
-                print(f"    {fname:<14}{calls:>12}{sec:>10.4f}{share:>8.1f}%")
+                print(f"    {fname:<14}{calls:>12}{sec:>10.4f}{share:>7.1f}%{mark}")
             else:
-                print(f"    {fname:<14}{calls:>12}{'-':>10}{'-':>9}")
+                print(f"    {fname:<14}{calls:>12}{'-':>10}{'-':>8}{mark}")
+        if noisy:
+            print("    * 秒數主要是插樁本身，只讀呼叫數；工作量請用 bench.py budget")
 
 
 if __name__ == "__main__":
@@ -220,4 +206,4 @@ if __name__ == "__main__":
         profile_hotspots("./ai_profiled.dll")
     else:
         print("\n(略過熱點量測：找不到 ai_profiled.dll，"
-              "先跑 python gen_profiled.py && gcc -shared -o ai_profiled.dll -fPIC ai_profiled.c)")
+              "改用 python bench.py hotspots）")

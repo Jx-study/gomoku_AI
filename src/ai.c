@@ -527,6 +527,59 @@ int maxRunAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int *has
     return best;
 }
 
+// 把一個方向的 11 格窗口讀進 cells，中心固定為 CELL_SELF，牆與敵子同視為 CELL_OPP
+// 編碼規則與 encodeWindow 一致，兩邊同時改才不會漂移
+static void loadWindow(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy,
+                       int player, int cells[11]) {
+    for (int off = -5; off <= 5; off++) {
+        if (off == 0) { cells[5] = CELL_SELF; continue; }
+        int nx = x + off * dx, ny = y + off * dy;
+        if (nx < 0 || nx >= BOARD_MAX || ny < 0 || ny >= BOARD_MAX) cells[5 + off] = CELL_OPP;
+        else if (board[ny][nx] == player) cells[5 + off] = CELL_SELF;
+        else if (board[ny][nx] == 0) cells[5 + off] = CELL_EMPTY;
+        else cells[5 + off] = CELL_OPP;
+    }
+}
+
+// 含 pos 且含中心的「恰好五」區間起點，找不到回傳 -1
+// 恰好五：區間兩側外一格不得再是己方子，否則是長連，依 RIF 不算成五
+static int exactFiveStart(int cells[11], int pos) {
+    int lo = pos - 4 >= 0 ? pos - 4 : 0;
+    int hi = pos < 6 ? pos : 6;
+    for (int s = lo; s <= hi; s++) {
+        if (s < 1 || s > 5) continue;                    // 區間必須含中心
+        bool all = true;
+        for (int k = 0; k < 5; k++) if (cells[s + k] != CELL_SELF) { all = false; break; }
+        if (!all) continue;
+        if (s - 1 >= 0 && cells[s - 1] == CELL_SELF) continue;
+        if (s + 5 < 11 && cells[s + 5] == CELL_SELF) continue;
+        return s;
+    }
+    return -1;
+}
+
+// 同一個四的多個成五點共用同一組四顆子（活四即如此），用四子集合去重，
+// 兩組不同的四子集合才算兩個四，同一直線上因此也可能四四禁手
+/* 回傳一個方向內「四」的個數，上限 2（數到 2 即可判定四四，不必再數） */
+static int countFours(int cells[11]) {
+    unsigned int groups[2];
+    int n = 0;
+    for (int pos = 0; pos < 11 && n < 2; pos++) {
+        if (cells[pos] != CELL_EMPTY) continue;
+        cells[pos] = CELL_SELF;
+        int s = exactFiveStart(cells, pos);
+        if (s >= 0) {
+            unsigned int mask = 0;
+            for (int k = 0; k < 5; k++) if (s + k != pos) mask |= 1u << (s + k);
+            bool seen = false;
+            for (int i = 0; i < n; i++) if (groups[i] == mask) { seen = true; break; }
+            if (!seen) groups[n++] = mask;
+        }
+        cells[pos] = CELL_EMPTY;
+    }
+    return n;
+}
+
 /* 落子判定：checkUnValid 與 endGame 共用，避免規則邏輯分散而漂移。
    回傳： 2 = 勝著（五連；白棋長連也算勝）
           1 = 一般合法著法
@@ -539,10 +592,25 @@ int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     if (line[5] > 0) return 2;                       // 五連即勝，優先於一切禁手
     if (line[15] > 0) return player == 2 ? 2 : -6;   // 長連只對白棋算勝
     if (player == 1) {
-        // 三三只認活三/跳活三（tp>=2，兩個方向都能成活四）；偏活三/偏活跳三
-        // （13/11，tp==1，只有一個方向能成活四）不算，只用於評分權重
+        // 三三仍只認碼 3/9，未依 RIF 放寬到碼 11/13。RIF 的三是「能再加一子成活四」，
+        // 一種填法就夠，照字面該把 tp==1 的 11/13 也算進來；但 threePoints 依賴的
+        // fivePoints 沒有「恰好五」守衛，會把填了變六連的點也當成五點，
+        // 因此 tp>=1 並不等於真的能成活四，放寬會擋掉合法著法。
+        // 要放寬得先讓 makesFive/fivePoints 認得長連，見 renju-rules.md
         if ((line[3] + line[9]) >= 2) return -3;
-        if ((line[4] + line[8] + line[10] + line[12]) >= 2) return -4;
+        // 四四逐方向數四，碼加總會把同一條線上的兩個四算成一個，見 renju-rules.md
+        // 碼只當快篩：碼為 0 時該方向必無四，反向不成立
+        if (line[4] + line[8] + line[10] + line[12] > 0) {
+            int dxF[] = {1, 1, 0, -1};
+            int dyF[] = {0, 1, 1, 1};
+            int fours = 0;
+            for (int i = 0; i < 4 && fours < 2; i++) {
+                int cells[11];
+                loadWindow(board, x, y, dxF[i], dyF[i], player, cells);
+                fours += countFours(cells);
+            }
+            if (fours >= 2) return -4;
+        }
     }
     return 1;
 }

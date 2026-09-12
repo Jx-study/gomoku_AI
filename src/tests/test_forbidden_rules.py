@@ -168,19 +168,13 @@ class TestThreeNeedsOnlyOneWayToStraightFour:
     """RIF 的三是「能再加一子成活四」，一種填法就夠，不要求兩種。
 
     「兩種不同填法」是活四的定義（straight four: in two different ways），
-    不是三的定義。碼 11/13（tp==1）依字面也是三，現行實作只數碼 3/9
-    （tp>=2），因此以下這些真正的雙三被放行。
+    不是三的定義。碼 11/13（tp==1）依字面也是三，三三加總已納入這兩碼。
 
-    直接把 11/13 加進三三加總**不能**修好，會引入更大的反向錯誤：
-    `threePoints` 依賴的 `fivePoints`/`makesFive` 沒有「恰好五」守衛，
-    把「填了會變六連」的點也當成成五點，所以 tp>=1 不等於真的能成活四。
-    全枚舉：碼 11 有 588/1296 個窗口、碼 13 有 162/486 個窗口其實不是三，
-    放寬會把這些合法著法誤判成禁手。要修得先讓 makesFive 認得長連。
-    見 Note/technical/renju-rules.md。
+    這仰賴 `fivePoints`/`makesFive` 先補上「恰好五」守衛：沒有守衛時
+    「填了會變六連」的點也會被當成成五點，tp>=1 就不等於真能成活四，
+    全枚舉會有假三（碼 11 588/1296、碼 13 162/486 個窗口其實不是三）。
     """
 
-    @pytest.mark.xfail(reason="碼 11/13 未計入三三；修法受阻於 fivePoints 不認長連",
-                       strict=True)
     def test_reported_game_double_three_is_forbidden(self, judge):
         """使用者實戰回報的漏判：第 11 手同時成一個跳三與一個活三。
 
@@ -204,8 +198,6 @@ class TestThreeNeedsOnlyOneWayToStraightFour:
         ]]
         assert not is_legal(judge(stones, mid - 2, mid))
 
-    @pytest.mark.xfail(reason="碼 11/13 未計入三三；修法受阻於 fivePoints 不認長連",
-                       strict=True)
     def test_jump_three_plus_open_three(self, judge):
         """跳三與活三交於落子點。
 
@@ -220,18 +212,26 @@ class TestThreeNeedsOnlyOneWayToStraightFour:
         assert not is_legal(judge(stones, 6, 7))
 
     def test_two_jump_threes(self, judge):
-        """兩個跳活三相交也是三三禁手，不需要任何一個是實心活三。
+        """`..S.S*.S...` 形似跳三，實際上不是三，這一手合法。
 
-        兩個方向都是 `..S.S*.S...`，分類為碼 9（跳活三），沒有碼 3。
-        原本的構型是 `SS.S*`，那是跳四不是跳三，實際判到的是四四（-4），
-        `not is_legal` 照樣過，但測到的不是這個測試宣稱的東西。
+        填缺口（index 3 或 6）的另一個成五點會拉到 6 連，依 RIF 是長連
+        不算成五，所以那格只能成衝四，不是活四。makesFive 補上恰好五
+        守衛前，這個窗口曾被誤判成碼 9（跳活三），見 renju-rules.md。
         """
         stones = (line(7, [4, 6, 9], BLACK)
                   + line(7, [4, 6, 9], BLACK, horizontal=False))
+        assert is_legal(judge(stones, 7, 7))
+
+    def test_two_jump_threes_forbidden(self, judge):
+        """兩個跳活三相交才是真正的三三禁手，不需要任何一個是實心活三。
+
+        兩個方向都是 `..S.SS..S..`，分類為碼 9（跳活三）：填 index 3
+        或 index 6 都恰好成五連的活四，兩端不觸及長連。
+        """
+        stones = (line(7, [4, 6, 10], BLACK)
+                  + line(7, [4, 6, 10], BLACK, horizontal=False))
         assert judge(stones, 7, 7) == -3
 
-    @pytest.mark.xfail(reason="碼 11/13 未計入三三；修法受阻於 fivePoints 不認長連",
-                       strict=True)
     def test_wall_side_three_plus_open_three(self, judge):
         """牆外仍留一格時，三連往開放端補滿可成活四，仍是三。
 
@@ -303,12 +303,10 @@ class TestWallLimitsThree:
         horizontal, vertical = self._shapes(5)
         assert not is_legal(judge(horizontal + vertical, 5, 7))
 
-    @pytest.mark.xfail(reason="碼 13 未計入三三；修法受阻於 fivePoints 不認長連",
-                       strict=True)
     def test_wall_leaving_one_gap_is_still_a_three(self, judge):
         """牆外還留一格：往右補滿後兩端各有一個成五點，仍是三 -> 禁手。
 
-        水平被分類成碼 13（tp==1），現行實作不計入三三，故仍放行。
+        水平被分類成碼 13（tp==1）。
         """
         horizontal, vertical = self._shapes(1)
         assert not is_legal(judge(horizontal + vertical, 1, 7))
@@ -409,6 +407,17 @@ class TestSameLineDoubleFour:
                   + line(7, [4, 5, 6], BLACK, horizontal=False))
         assert judge(stones, 7, 7) != -4
 
+    def test_four_not_through_move_point_does_not_count(self, judge):
+        """四要在落子點與另一個四相會才算數，本來就存在的舊四不算。
+
+        `X.XXX.H.`（黑子 x=3,5,6,7，落子 H=x=9）：填 x=4 得 x=3..7 五連，
+        這組四子（3,5,6,7）落子前就已成立，不經過本次落子點 x=9，
+        依 RIF「meet each other in this intersection」不算與這手相關的四。
+        填 x=8 得 x=5..9 五連，這組（5,6,7,9）才經過落子點，是唯一的四。
+        """
+        stones = line(7, [3, 5, 6, 7], BLACK)
+        assert is_legal(judge(stones, 9, 7))
+
 
 class TestFourThreeIsLegal:
     """四三是黑棋唯一的合法致勝手，誤判成禁手會讓黑棋無法取勝。"""
@@ -425,21 +434,14 @@ class TestFourThreeIsLegal:
 
 
 class TestRecursiveForbiddenIsNotImplemented:
-    """RIF 的三還有一個條件沒實作：形成活四的點不可同時成五或成禁手。
+    """RIF §9.3：雙三只在兩個以上的三都能推進到合法活四時才禁手。
 
-    出處：https://587.renju.org.tw/teach/teach018.htm 的「不算活三」圖例
-      「其活四點不可同時形成五或禁手
-       △△△的活四點，往左會形成五連，往右會形成雙活三禁手
-       □□□的活四點，往左會形成長連禁手，往右與自身會形成雙四禁手
-       所有活四點皆會形成五或禁，△△△和□□□都無法活四，則皆不算活三」
+    判斷一個表面雙三合不合法，要對每個三的活四點模擬落子，遞迴判定
+    那個活四點本身合不合法（會不會同時成五、長連、四四，或觸發另一個
+    禁手雙三）。只剩一個三能推進，這個表面雙三就豁免、可以下。
 
-    這需要遞迴判定：判斷一個形狀是不是三，要先判斷它的活四點是不是禁手，
-    而那又要判斷該點周圍的三是不是三。現行 `threePoints()` 只擋掉
-    「同時成五」（`!makesFive`），完全沒有「或禁手」這一半，而且它只看
-    單一方向的 11 格窗口，看不到其他方向，判不出活四點會不會造成雙三。
-
-    補上需要改動棋型分類的架構（patternTable 是單方向查表），不在本次範圍。
-    以下用 xfail 記錄缺陷與重現盤面，將來實作時把標記拿掉即驗收。
+    `judgeMove` 在判定表面雙三成立那一刻才觸發這個檢查（`threeSpotsInDirection`
+    + 對活四點遞迴呼叫 `judgeMove`），不需要更動 `patternTable` 的單方向查表。
     """
 
     # 水平跳三 `S*S`：落 (7,7) 後為 x=6,7,8 的形，兩個活四點是 (5,7) 與 (9,7)
@@ -453,19 +455,17 @@ class TestRecursiveForbiddenIsNotImplemented:
     def test_both_straight_four_points_are_indeed_forbidden(self, judge):
         """前置條件：兩個活四點確實都是黑棋禁手點。
 
-        這個測試現在就該過——它驗證的是下面 xfail 案例的布局前提，
-        而不是遞迴規則本身。前提壞掉時這裡會先紅，才不會讓 xfail 失去意義。
+        驗證下面測試案例的布局前提，不是遞迴規則本身。前提壞掉時這裡
+        會先紅，才不會讓下一個測試的通過失去意義。
         """
         base = self.HORIZONTAL + self.DIAGONAL
         assert not is_legal(judge(base + self.MAKES_LEFT_FORBIDDEN, 5, 7))
         assert not is_legal(judge(base + self.MAKES_RIGHT_FORBIDDEN, 9, 7))
 
-    @pytest.mark.xfail(reason="遞迴禁手判定未實作：活四點若是禁手點，該形狀不算三",
-                       strict=True)
     def test_three_whose_straight_four_points_are_all_forbidden(self, judge):
         """水平形的兩個活四點都是黑棋禁手點，依 RIF 該水平形不算三。
 
-        不算三就湊不成三三，這一手應該合法；現行實作仍判 -3。
+        不算三就湊不成三三，這一手合法。
         """
         stones = (self.HORIZONTAL + self.DIAGONAL
                   + self.MAKES_LEFT_FORBIDDEN + self.MAKES_RIGHT_FORBIDDEN)

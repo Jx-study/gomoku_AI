@@ -13,8 +13,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB = os.path.join(HERE, "lib")
 SRC_DIR = os.path.normpath(os.path.join(HERE, ".."))   # src/
+LIB_DIR = os.path.join(SRC_DIR, "lib")
 # budget/cells/hotspots 做文字插樁，要看到完整引擎，走 ai_unity.c（各模組 .c 的 unity build）
-AI_UNITY_C = os.path.join(SRC_DIR, "ai_unity.c")
+AI_UNITY_C = os.path.join(LIB_DIR, "ai_unity.c")
 AI_DLL = os.path.join(SRC_DIR, "ai.dll")
 
 EPILOG = """\
@@ -86,7 +87,7 @@ def cmd_hotspots(a):
         if run_script("gen_profiled.py", []) != 0:
             return 1
         build = subprocess.run(["gcc", "-shared", "-o", dll, "-fPIC",
-                                "-I", SRC_DIR,
+                                "-I", LIB_DIR,
                                 os.path.join(LIB, "ai_profiled.c")],
                                capture_output=True, text=True)
         if build.returncode != 0:
@@ -133,7 +134,7 @@ def main():
                                    "盤面格、各佔多少，另外給出增量維護划不划算的門檻判定。"
                                    "確定性指標，重跑結果相同。")
     b.add_argument("source", nargs="?", default=AI_UNITY_C,
-                   help="要量的 ai_unity.c，預設 src/ai_unity.c")
+                   help="要量的 ai_unity.c，預設 src/lib/ai_unity.c")
     b.set_defaults(func=cmd_budget)
 
     c = sub.add_parser("cells", help="checkLine 每次讀幾格",
@@ -141,11 +142,11 @@ def main():
                                    "密度。兩版若是同一種實作，比值恆為 1.00x，會提示基準"
                                    "選錯了。")
     c.add_argument("baseline", nargs="?", help="基準 ai.c，通常取自拆分前的歷史提交")
-    c.add_argument("new", nargs="?", help="新版 ai_unity.c，預設 src/ai_unity.c")
+    c.add_argument("new", nargs="?", help="新版 ai_unity.c，預設 src/lib/ai_unity.c")
     c.set_defaults(func=cmd_cells)
 
     h = sub.add_parser("hotspots", help="各函數被呼叫幾次",
-                       description="量目前的 src/ai_unity.c，會重新生成並編譯插樁版，量完刪除。"
+                       description="量目前的 src/lib/ai_unity.c，會重新生成並編譯插樁版，量完刪除。"
                                    "呼叫數上萬的函數秒數會標 *，那些列只讀呼叫數。")
     h.set_defaults(func=cmd_hotspots)
 

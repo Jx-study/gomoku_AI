@@ -17,7 +17,7 @@ checkLine 單次只有幾十奈秒，這個尺度的計時不準，profiler 的�
 原始碼本身不修改，每次執行重新生成。探針找不到對應位置時會以非 0 結束。
 
 用法（在 src/_bench/ 下）：
-    python bench.py budget [ai_unity.c 路徑]     # 預設 ../ai_unity.c
+    python bench.py budget [ai_unity.c 路徑]     # 預設 ../lib/ai_unity.c
 """
 import os
 import re
@@ -31,7 +31,8 @@ import unity
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # src/_bench/
 SRC_DIR = os.path.join(ROOT, "..")                  # src/
-DEFAULT_SRC = os.path.join(SRC_DIR, "ai_unity.c")
+LIB_DIR = os.path.join(SRC_DIR, "lib")
+DEFAULT_SRC = os.path.join(LIB_DIR, "ai_unity.c")
 # 中間檔放 repo 內而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
 WORKDIR = os.path.join(ROOT, "_count_budget_tmp")
 
@@ -159,7 +160,7 @@ int main(void) {
 def board_max(src):
     # BOARD_MAX 定義在 types.h，unity 展開只拉 #include "*.c"、不拉 .h，
     # 展開後的文字裡找不到這個 #define；直接讀 types.h 本身
-    types_h = os.path.join(SRC_DIR, "types.h")
+    types_h = os.path.join(LIB_DIR, "types.h")
     if os.path.exists(types_h):
         with open(types_h, encoding="utf-8") as f:
             src = f.read()
@@ -234,7 +235,7 @@ def main():
             })
 
         exe = os.path.join(WORKDIR, "probe.exe")
-        build = subprocess.run(["gcc", "-O2", "-I", SRC_DIR, "-o", exe, drv, core],
+        build = subprocess.run(["gcc", "-O2", "-I", LIB_DIR, "-o", exe, drv, core],
                                capture_output=True, text=True)
         if build.returncode != 0:
             sys.exit("count_budget: 編譯失敗\n" + build.stderr)

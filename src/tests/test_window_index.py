@@ -15,9 +15,9 @@
 test_ai_opening.py 的中局佈局（走 miniMax／findBestMove 的 2 個賦值點），
 兩者合起來才會踩過全部 12 處落子/撤銷入口。
 
-需要先能編譯共享庫（本檔的 fixture 會自動用 src/*.c 排除 ai_unity.c 後編譯，
+需要先能編譯共享庫（本檔的 fixture 會自動用 src/lib/*.c 排除 ai_unity.c 後編譯，
 不需要手動執行）：
-    cd src && gcc -shared -o ai.dll -fPIC -DWINDOW_IDX_CHECK zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c
+    cd src && gcc -I lib -shared -o ai.dll -fPIC -DWINDOW_IDX_CHECK lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c
 找不到 gcc 時整個模組會被 skip。
 """
 import glob
@@ -31,6 +31,7 @@ import textwrap
 import pytest
 
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LIB_DIR = os.path.join(SRC_DIR, "lib")
 DEBUG_DIR = os.path.join(SRC_DIR, "_window_idx_debug_build")
 
 
@@ -82,13 +83,15 @@ def debug_dll():
     # WINDOW_IDX_CHECK 的 #ifdef 區段橫跨 boardstate.c 與 lines.c 兩個模組，
     # 巨集要對整個編譯命令生效，不能只傳單一來源檔。排除 ai_unity.c：
     # 它自己 #include 了下面這些同名 .c，一起編會變成重複定義
-    src_paths = sorted(
-        p for p in glob.glob(os.path.join(SRC_DIR, "*.c"))
+    lib_paths = sorted(
+        p for p in glob.glob(os.path.join(LIB_DIR, "*.c"))
         if os.path.basename(p) != "ai_unity.c"
     )
+    src_paths = lib_paths + [os.path.join(SRC_DIR, "ai.c")]
     try:
         result = subprocess.run(
-            [GCC, "-shared", "-o", out_path, "-fPIC", "-DWINDOW_IDX_CHECK", *src_paths],
+            [GCC, "-I", LIB_DIR, "-shared", "-o", out_path, "-fPIC",
+             "-DWINDOW_IDX_CHECK", *src_paths],
             capture_output=True, text=True,
         )
     except OSError as e:

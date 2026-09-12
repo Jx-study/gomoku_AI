@@ -9,4 +9,4 @@
 #include "movegen.c"
 #include "vcf.c"
 #include "search.c"
-#include "ai.c"
+#include "../ai.c"

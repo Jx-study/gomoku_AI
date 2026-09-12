@@ -1,4 +1,4 @@
-"""從 src/ai_unity.c（各模組 .c 的 unity build）生成 profiler 用的中間檔
+"""從 src/lib/ai_unity.c（各模組 .c 的 unity build）生成 profiler 用的中間檔
 （ai_profiled_core.generated.c）。
 
 為什麼需要生成而非 #define 改名：
@@ -29,7 +29,8 @@ TARGETS = [
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(HERE, "..", "..")            # lib/ -> _bench/ -> src/
-UNITY_PATH = os.path.join(SRC_DIR, "ai_unity.c")
+LIB_DIR = os.path.join(SRC_DIR, "lib")
+UNITY_PATH = os.path.join(LIB_DIR, "ai_unity.c")
 OUT = os.path.join(HERE, "ai_profiled_core.generated.c")
 
 
@@ -38,7 +39,7 @@ def main():
     original = src
 
     header = (
-        "/* 自動生成，請勿手動編輯。來源 src/ai_unity.c 展開後的各模組，"
+        "/* 自動生成，請勿手動編輯。來源 src/lib/ai_unity.c 展開後的各模組，"
         "生成器 src/_bench/lib/gen_profiled.py。\n"
         "   只有函數定義被改名為 prof_real_*；呼叫處維持原名以綁到 wrapper。 */\n"
     )

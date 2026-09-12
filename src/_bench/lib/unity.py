@@ -1,4 +1,4 @@
-"""展開 src/ai_unity.c 的本地 #include "*.c"，回傳串接後的原始碼。
+"""展開 src/lib/ai_unity.c 的本地 #include "*.c"，回傳串接後的原始碼。
 
 ai.c 拆成多檔後，三個對原始碼做文字插樁的工具（gen_profiled.py、
 count_budget.py、count_cells.py）都要看到「像單檔時代 ai.c 一樣」的

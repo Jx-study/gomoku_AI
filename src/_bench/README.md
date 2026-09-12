@@ -17,7 +17,7 @@ gcc -shared -o old.dll -fPIC old.c
 `git show` 取出的是拆分前的單檔版本，直接編即可。若要從拆分後的當前程式碼編一顆對照 dll，要列出所有模組（見下方 `moves` 用法範例）。
 
 - `../ai.dll` 是現行版，也是 `bench.py` 的預設對照組；基準 dll 找不到時會報錯
-- 棋盤大小一律向 dll 問（`getBoardMax()`），盤面座標以中心點的偏移表示，改了 `types.h` 的 `BOARD_MAX` 之後腳本不需要跟著改
+- 棋盤大小一律向 dll 問（`getBoardMax()`），盤面座標以中心點的偏移表示，改了 `types.h`（`../lib/types.h`）的 `BOARD_MAX` 之後腳本不需要跟著改
 - 兩個 dll 的棋盤大小不同時會直接報錯
 - `bench.py` 會把路徑轉成絕對路徑再交給子腳本，在哪個目錄執行都可以
 - 本文件的範例都寫成在 `src/_bench/` 底下執行；`pytest` 例外，要在 repo 根目錄跑
@@ -53,7 +53,7 @@ gcc -shared -o base.dll -fPIC base.c
 python bench.py moves ./base.dll        # 新版預設 ../ai.dll
 
 # 若基準也要從拆分後的程式碼編（例如只差某個模組的一項改動），列出全部模組：
-gcc -shared -o base.dll -fPIC zobrist.c pattern.c boardstate.c lines.c eval.c movegen.c vcf.c search.c ai.c
+gcc -I lib -shared -o base.dll -fPIC lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c
 
 # 棋力有沒有退步
 cp ../ai.dll ./new.dll                 # 兩個路徑必須是不同檔案，new.dll 用完可刪
@@ -61,7 +61,7 @@ python bench.py strength ./base.dll ./new.dll [games] [--quiet] [--pgn out.pgn]
 
 # 下一個該優化誰；budget/cells/hotspots 做文字插樁，量的是 ai_unity.c
 # （unity build，一串 #include 各模組 .c，展開後供插樁腳本讀取，不用於正式編譯）
-python bench.py budget                 # 量現行 ../ai_unity.c
+python bench.py budget                 # 量現行 ../lib/ai_unity.c
 git show <commit>:src/ai.c > base.c
 python bench.py budget base.c          # 量歷史單檔版本，兩次輸出自己比
 
@@ -132,7 +132,7 @@ pytest src/tests/test_zobrist.py
 ...
 
 before = old.c（逐格掃描）
-after  = ../ai_unity.c（查表）
+after  = ../lib/ai_unity.c（查表）
 ```
 
 掃四個密度是因為兩種實作對密度的反應不同：查表版恆定（四方向各掃滿 10 格才能得到 3 進制索引，少讀一格索引就錯位），逐格掃描版隨盤面變密而略升（遇對手子或連續兩空格就 `break`，盤面越滿要掃越遠才停）。

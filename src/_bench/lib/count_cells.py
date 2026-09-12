@@ -9,7 +9,7 @@
 .c 再插樁）；「基準」通常來自拆分前的歷史提交，本身就是單檔 ai.c，不必展開。
 
 用法（在 src/_bench/ 下）：
-    python bench.py cells old.c [new.c]        # new 預設 ../ai_unity.c
+    python bench.py cells old.c [new.c]        # new 預設 ../lib/ai_unity.c
     python bench.py cells                      # 無基準時報錯，要求明確指定
 
 基準要選「只差你這一項」的版本（見 README 陷阱 2）；兩版若是同一種實作，比值恆為 1.00x。
@@ -25,7 +25,8 @@ import unity
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # src/_bench/
 SRC_DIR = os.path.join(ROOT, "..")                  # src/
-DEFAULT_NEW = os.path.join(SRC_DIR, "ai_unity.c")
+LIB_DIR = os.path.join(SRC_DIR, "lib")
+DEFAULT_NEW = os.path.join(LIB_DIR, "ai_unity.c")
 # 中間檔放本目錄而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
 WORKDIR = os.path.join(ROOT, "_count_cells_tmp")
 
@@ -99,7 +100,7 @@ IDX_SETUP = "rebuildWindowIndex(board); idxValid = 1;"
 def board_max(src):
     # BOARD_MAX 定義在 types.h，unity 展開只拉 #include "*.c"、不拉 .h，
     # 展開後的文字裡找不到這個 #define；直接讀 types.h 本身
-    types_h = os.path.join(SRC_DIR, "types.h")
+    types_h = os.path.join(LIB_DIR, "types.h")
     if os.path.exists(types_h):
         with open(types_h, encoding="utf-8") as f:
             src = f.read()
@@ -158,7 +159,7 @@ def measure(src_path, stones, workdir):
                           "idx_protos": idx_protos, "idx_setup": idx_setup})
 
     exe = os.path.join(workdir, "probe.exe")
-    build = subprocess.run(["gcc", "-O2", "-I", SRC_DIR, "-o", exe, drv, core],
+    build = subprocess.run(["gcc", "-O2", "-I", LIB_DIR, "-o", exe, drv, core],
                            capture_output=True, text=True)
     if build.returncode != 0:
         sys.exit("count_cells: 編譯 %s 失敗\n%s" % (label, build.stderr))

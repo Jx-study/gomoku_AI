@@ -38,20 +38,25 @@ static int solidRun(int cells[11]) {
     return leftRun + 1 + rightRun;
 }
 
-// 是否存在一個含中心的 5 格區間全為 SELF
+// 是否存在一個含中心、恰好五連的區間：區間內全為 SELF，且左右外側各一格
+// 不得也是 SELF，否則屬於長連而非五連，依 RIF 不算成五
 static bool makesFive(int cells[11]) {
     for (int start = 1; start <= 5; start++) {
         bool all = true;
         for (int k = 0; k < 5; k++) {
             if (cells[start + k] != CELL_SELF) { all = false; break; }
         }
-        if (all) return true;
+        if (!all) continue;
+        if (start - 1 >= 0 && cells[start - 1] == CELL_SELF) continue;
+        if (start + 5 < 11 && cells[start + 5] == CELL_SELF) continue;
+        return true;
     }
     return false;
 }
 
 // 四：能再加一子成五。回傳成五點的個數，兩個以上即活四
-static int fivePoints(int cells[11]) {
+// 非 static：lines.c 的 threeSpotsInDirection 借用來找活四點座標
+int fivePoints(int cells[11]) {
     int n = 0;
     for (int i = 0; i < 11; i++) {
         if (cells[i] != CELL_EMPTY) continue;

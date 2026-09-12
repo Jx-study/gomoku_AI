@@ -106,20 +106,39 @@ def _segments():
 
 
 def _makes_five(cells):
-    """區間視角：存在一個含中心的 5 格區間全為 SELF。"""
-    return any(all(cells[i] == SELF for i in seg) for seg in _segments())
+    """區間視角：存在一個含中心、恰好五連的區間全為 SELF。
+
+    恰好五：區間兩側外一格不得也是 SELF，否則屬於長連而非五連。
+    """
+    for seg in _segments():
+        if not all(cells[i] == SELF for i in seg):
+            continue
+        s = seg[0]
+        if s - 1 >= 0 and cells[s - 1] == SELF:
+            continue
+        if s + 5 < WINDOW and cells[s + 5] == SELF:
+            continue
+        return True
+    return False
 
 
 def _fillable_to_five(cells):
-    """區間視角：哪些空格填入後能讓某個含中心區間湊滿五子。
+    """區間視角：哪些空格填入後能讓某個含中心區間湊滿恰好五子。
 
-    對每個區間算「缺哪幾格」，只缺一格且該格為空時，那格就是成五點。
+    對每個區間算「缺哪幾格」，只缺一格且該格為空時，那格就是成五點；
+    區間兩側外一格若已是 SELF，填了會變長連，不算成五點。
     """
     spots = set()
     for seg in _segments():
         missing = [i for i in seg if cells[i] != SELF]
-        if len(missing) == 1 and cells[missing[0]] == EMPTY:
-            spots.add(missing[0])
+        if len(missing) != 1 or cells[missing[0]] != EMPTY:
+            continue
+        s = seg[0]
+        if s - 1 >= 0 and cells[s - 1] == SELF:
+            continue
+        if s + 5 < WINDOW and cells[s + 5] == SELF:
+            continue
+        spots.add(missing[0])
     return spots
 
 
@@ -569,11 +588,22 @@ class TestKnownShapes:
         cells = [OPP, OPP, OPP, EMPTY, SELF, SELF, SELF, SELF, EMPTY, OPP, OPP]
         assert classify_c(cells) == 4
 
-    def test_jump_open_three(self, classify_c):
-        # ...S.SS.S.. 兩側都能補成活四 -> 跳活三
+    def test_jump_open_three_looking_shape_is_not_a_three(self, classify_c):
+        """...S.SS.S.. 形似跳三，實際上不是三，只能成衝四。
+
+        填 index4 或 index7 表面上各自湊出兩個成五點，但其中一個成五點
+        會拉到 6 連（長連），恰好五守衛補上前這個窗口曾誤判為碼 9。
+        """
         cells = [EMPTY, EMPTY, EMPTY, SELF, EMPTY, SELF, SELF, EMPTY, SELF,
                  EMPTY, EMPTY]
         assert render(cells) == "...S.SS.S.."
+        assert classify_c(cells) == 14
+
+    def test_jump_open_three(self, classify_c):
+        # ..S.SS..S.. 兩側都能補成恰好五連的活四 -> 跳活三
+        cells = [EMPTY, EMPTY, SELF, EMPTY, SELF, SELF, EMPTY, EMPTY, SELF,
+                 EMPTY, EMPTY]
+        assert render(cells) == "..S.SS..S.."
         assert classify_c(cells) == 9
 
     def test_blocked_three_reaches_only_chong_four(self, classify_c):

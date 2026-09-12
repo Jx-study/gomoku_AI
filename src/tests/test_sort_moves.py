@@ -13,7 +13,7 @@ y=9 這一行擺出 `..WW.W..`（兩端皆空的跳三，`classifyWindow` 碼 11
    這一層有沒有把它撿起來。
 
 需要先編譯共享庫：
-    cd src && gcc -shared -o ai.dll -fPIC ai.c
+    cd src && gcc -I lib -shared -o ai.dll -fPIC lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c
 找不到時整個模組會被 skip。
 """
 import ctypes
@@ -41,7 +41,7 @@ LIB_PATH = os.path.join(SRC_DIR, _lib_filename())
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists(LIB_PATH),
-    reason=f"{_lib_filename()} 未編譯；先執行 gcc -shared -o ai.dll -fPIC ai.c",
+    reason=f"{_lib_filename()} 未編譯；先執行 gcc -I lib -shared -o ai.dll -fPIC lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c",
 )
 
 

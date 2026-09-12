@@ -13,11 +13,11 @@ checkLine 單次只有幾十奈秒，這個尺度的計時不準，profiler 的�
         （winsAt 直接查同一份索引，併入分子）
     鄰格計數表（已上線）：hasAdjacentPiece 呼叫數 / 落子數 > 24 / 實測格每次
 
-做法與 count_cells.py 相同：讀 ai.c，只插計數器，ai.c 本身不修改，每次執行重新生成。
-探針在 ai.c 找不到對應位置時會以非 0 結束。
+做法與 count_cells.py 相同：讀 ai_unity.c 展開後的各模組，只插計數器，
+原始碼本身不修改，每次執行重新生成。探針找不到對應位置時會以非 0 結束。
 
 用法（在 src/_bench/ 下）：
-    python bench.py budget [ai.c 路徑]     # 預設 ../ai.c
+    python bench.py budget [ai_unity.c 路徑]     # 預設 ../lib/ai_unity.c
 """
 import os
 import re
@@ -26,10 +26,13 @@ import subprocess
 import sys
 
 import positions
+import unity
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # src/_bench/
-DEFAULT_SRC = os.path.join(ROOT, "..", "ai.c")
+SRC_DIR = os.path.join(ROOT, "..")                  # src/
+LIB_DIR = os.path.join(SRC_DIR, "lib")
+DEFAULT_SRC = os.path.join(LIB_DIR, "ai_unity.c")
 # 中間檔放 repo 內而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
 WORKDIR = os.path.join(ROOT, "_count_budget_tmp")
 
@@ -63,8 +66,8 @@ PROBES = [
      "void checkLine(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player, int my_line[16]) {\n"
      "    g_checkline++;"),
     # winsAt：呼叫數（直接查索引，不再經過 checkLine，固定 4 次索引存取）
-    ("static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
-     "static bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
+    ("bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
+     "bool winsAt(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
      "    g_wins_calls++;"),
     # judgeMove：總呼叫數，以及其中走到 checkLine 的（沒在 maxRunAt 那段就返回的）
     ("int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
@@ -97,11 +100,11 @@ PROBES = [
      "            g_sl_iter++;\n"
      "            checkLine(board, stoneList[p][i] % BOARD_MAX, stoneList[p][i] / BOARD_MAX, player, my_now);"),
     # 落子/撤銷單一入口
-    ("static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
-     "static void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
+    ("void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {",
+     "void placeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {\n"
      "    g_placements++;"),
-    ("static void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {",
-     "static void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {\n"
+    ("void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {",
+     "void removeStone(int board[BOARD_MAX][BOARD_MAX], int x, int y) {\n"
      "    g_placements++;"),
 ]
 
@@ -155,27 +158,34 @@ int main(void) {
 
 
 def board_max(src):
+    # BOARD_MAX 定義在 types.h，unity 展開只拉 #include "*.c"、不拉 .h，
+    # 展開後的文字裡找不到這個 #define；直接讀 types.h 本身
+    types_h = os.path.join(LIB_DIR, "types.h")
+    if os.path.exists(types_h):
+        with open(types_h, encoding="utf-8") as f:
+            src = f.read()
     m = re.search(r"^#define\s+BOARD_MAX\s+(\d+)", src, re.M)
     if not m:
-        sys.exit("count_budget: ai.c 抽不到 BOARD_MAX，定義格式可能改了。")
+        sys.exit("count_budget: 抽不到 BOARD_MAX，定義格式可能改了。")
     return int(m.group(1))
 
 
 def instrument(src):
-    def_re = re.compile(r"^static (?:void|int) (?:placeStone|removeStone)\(", re.M)
+    # 拆檔後 placeStone/removeStone 移到 boardstate.c、跨檔呼叫故不再 static
+    def_re = re.compile(r"^(?:static\s+)?(?:void|int)\s+(?:placeStone|removeStone)\(", re.M)
     call_re = re.compile(r"\b(?:placeStone|removeStone)\(")
     calls = len(call_re.findall(src)) - len(def_re.findall(src))
     if calls != EXPECTED_WRITES:
         sys.exit("count_budget: placeStone/removeStone 呼叫處找到 %d 個（預期 %d），"
-                 "ai.c 的落子/撤銷形式可能改了。" % (calls, EXPECTED_WRITES))
+                 "落子/撤銷形式可能改了。" % (calls, EXPECTED_WRITES))
     out = src
     for needle, replacement in PROBES:
         if needle not in out:
-            sys.exit("count_budget: 找不到探針錨點，ai.c 可能改了：\n  %s" % needle[:80])
+            sys.exit("count_budget: 找不到探針錨點，原始碼可能改了：\n  %s" % needle[:80])
         out = out.replace(needle, replacement, 1)
 
     if CAND_PROBE_ENDGAME not in out:
-        sys.exit("count_budget: 找不到 endGame 的候選迴圈錨點，ai.c 可能改了。")
+        sys.exit("count_budget: 找不到 endGame 的候選迴圈錨點，原始碼可能改了。")
     out = out.replace(CAND_PROBE_ENDGAME, "                g_cand_cells++;\n" + CAND_PROBE_ENDGAME, 1)
     out, n = CAND_PROBE.subn(r"\1g_cand_cells++;\n\1\2", out)
     if n + 1 != EXPECTED_CAND_LOOPS:
@@ -186,8 +196,13 @@ def instrument(src):
 
 def main():
     src_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
-    with open(src_path, encoding="utf-8") as f:
-        src = f.read()
+    # unity build（一串 #include "*.c"）要先展開成完整文字，探針才找得到錨點；
+    # 使用者若直接傳一份舊版單檔 ai.c 當基準，不含 #include "*.c" 則原樣使用
+    if os.path.basename(src_path) == "ai_unity.c":
+        src = unity.expand(src_path)
+    else:
+        with open(src_path, encoding="utf-8") as f:
+            src = f.read()
     bm = board_max(src)
     suite = positions.suite(bm)
 
@@ -220,7 +235,7 @@ def main():
             })
 
         exe = os.path.join(WORKDIR, "probe.exe")
-        build = subprocess.run(["gcc", "-O2", "-o", exe, drv, core],
+        build = subprocess.run(["gcc", "-O2", "-I", LIB_DIR, "-o", exe, drv, core],
                                capture_output=True, text=True)
         if build.returncode != 0:
             sys.exit("count_budget: 編譯失敗\n" + build.stderr)

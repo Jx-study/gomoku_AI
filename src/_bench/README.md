@@ -14,8 +14,10 @@ git show <commit>:src/ai.c > old.c
 gcc -shared -o old.dll -fPIC old.c
 ```
 
+`git show` 取出的是拆分前的單檔版本，直接編即可。若要從拆分後的當前程式碼編一顆對照 dll，要列出所有模組（見下方 `moves` 用法範例）。
+
 - `../ai.dll` 是現行版，也是 `bench.py` 的預設對照組；基準 dll 找不到時會報錯
-- 棋盤大小一律向 dll 問（`getBoardMax()`），盤面座標以中心點的偏移表示，改了 `ai.c` 的 `BOARD_MAX` 之後腳本不需要跟著改
+- 棋盤大小一律向 dll 問（`getBoardMax()`），盤面座標以中心點的偏移表示，改了 `types.h`（`../lib/types.h`）的 `BOARD_MAX` 之後腳本不需要跟著改
 - 兩個 dll 的棋盤大小不同時會直接報錯
 - `bench.py` 會把路徑轉成絕對路徑再交給子腳本，在哪個目錄執行都可以
 - 本文件的範例都寫成在 `src/_bench/` 底下執行；`pytest` 例外，要在 repo 根目錄跑
@@ -45,22 +47,25 @@ Zobrist 的正確性由 pytest 涵蓋（`../tests/test_zobrist.py`），測三�
 ```bash
 python bench.py --help
 
-# 走法有沒有變
-git show <commit>:src/ai.c > base.c     # 基準：只差要隔離的那一項的提交
+# 走法有沒有變（基準：只差要隔離的那一項的提交，拆分前的單檔 ai.c 直接編）
+git show <commit>:src/ai.c > base.c
 gcc -shared -o base.dll -fPIC base.c
 python bench.py moves ./base.dll        # 新版預設 ../ai.dll
+
+# 若基準也要從拆分後的程式碼編（例如只差某個模組的一項改動），列出全部模組：
+gcc -I lib -shared -o base.dll -fPIC lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c
 
 # 棋力有沒有退步
 cp ../ai.dll ./new.dll                 # 兩個路徑必須是不同檔案，new.dll 用完可刪
 python bench.py strength ./base.dll ./new.dll [games] [--quiet] [--pgn out.pgn]
 
-# 下一個該優化誰
-python bench.py budget                 # 量現行 ../ai.c
+# 下一個該優化誰；budget/cells/hotspots 做文字插樁，量的是 ai_unity.c
+# （unity build，一串 #include 各模組 .c，展開後供插樁腳本讀取，不用於正式編譯）
+python bench.py budget                 # 量現行 ../lib/ai_unity.c
 git show <commit>:src/ai.c > base.c
-python bench.py budget base.c          # 量歷史版本，兩次輸出自己比
+python bench.py budget base.c          # 量歷史單檔版本，兩次輸出自己比
 
-# checkLine 每次讀幾格；基準不給則用 HEAD:src/ai.c
-python bench.py cells
+# checkLine 每次讀幾格；基準必須明確指定，通常取自拆分前的歷史提交
 python bench.py cells base.c
 
 # 各函數被呼叫幾次；插樁產物自動生成、量完刪除
@@ -86,15 +91,15 @@ pytest src/tests/test_zobrist.py
 
 `hotspots` 判斷哪個函數被呼叫得最多。流程是生成、編譯、量測、刪除生成物，`bench.py` 一次做完：
 
-- `lib/gen_profiled.py` 讀 `ai.c`，把目標函數的定義改名為 `prof_real_*`，呼叫處維持原名，
-  輸出 `lib/ai_profiled_core.generated.c`（不入版控）
+- `lib/gen_profiled.py` 讀 `ai_unity.c`（unity build，一串 `#include "*.c"`）並展開成完整文字，
+  把目標函數的定義改名為 `prof_real_*`，呼叫處維持原名，輸出 `lib/ai_profiled_core.generated.c`（不入版控）
 - `lib/ai_profiled.c` 只是 wrapper：`#include` 生成檔，用原名定義同簽名的函數，
-  記錄呼叫次數與耗時後轉呼叫 `prof_real_*`。連結時 `ai.c` 內部的呼叫會綁到 wrapper
-- `ai.c` 不必修改，每次量測都重新生成
+  記錄呼叫次數與耗時後轉呼叫 `prof_real_*`。連結時各模組內部的呼叫會綁到 wrapper
+- 各模組原始碼不必修改，每次量測都重新生成
 
-不能用 `#define evaluate prof_real_evaluate` 改名：那會把定義與 `ai.c` 內部的呼叫一起改掉，內部呼叫跳過 wrapper，所有計數器恆為 0，編譯沒有警告。
+不能用 `#define evaluate prof_real_evaluate` 改名：那會把定義與內部呼叫一起改掉，內部呼叫跳過 wrapper，所有計數器恆為 0，編譯沒有警告。
 
-`ai.c` 的目標函數若改名或改簽名，`gen_profiled.py` 會以非 0 結束並印出是哪個函數抽不到簽名。
+目標函數若改名或改簽名，`gen_profiled.py` 會以非 0 結束並印出是哪個函數抽不到簽名。
 
 插樁的函數：`miniMax`（遞迴，只計次）、`sortMoves`、`endGame`、`evaluate`、`quickEvaluate`、`checkWin`、`checkLine`、`judgeMove`、`hasAdjacentPiece`、`maxRunAt`。
 
@@ -118,7 +123,7 @@ pytest src/tests/test_zobrist.py
 - `maxRunAt` 已不在生產路徑，讀格數恆為 0
 - 增量維護划不划算的門檻判定
 
-`bench.py cells` 只量 `checkLine`，兩個版本對比。它不跑 `aiRound`，而是用固定種子隨機鋪子掃四個密度（子數 8、18、50、80）：
+`bench.py cells` 只量 `checkLine`，兩個版本對比。它不跑 `aiRound`，而是用固定種子隨機鋪子掃四個密度（子數 8、18、50、80）；基準必須明確指定（不再有隱含預設），通常是拆分前的單檔歷史版本：
 
 ```
 每次 checkLine 讀取的盤面格數（確定性，重跑結果相同）
@@ -126,13 +131,13 @@ pytest src/tests/test_zobrist.py
 子數           before        after       比值
 ...
 
-before = HEAD:src/ai.c（逐格掃描）
-after  = ../ai.c（查表）
+before = old.c（逐格掃描）
+after  = ../lib/ai_unity.c（查表）
 ```
 
 掃四個密度是因為兩種實作對密度的反應不同：查表版恆定（四方向各掃滿 10 格才能得到 3 進制索引，少讀一格索引就錯位），逐格掃描版隨盤面變密而略升（遇對手子或連續兩空格就 `break`，盤面越滿要掃越遠才停）。
 
-做法與 `lib/gen_profiled.py` 相同：讀 `ai.c`、只在存取處插一個計數器、`ai.c` 本身不修改、每次執行重新生成。探針找不到對應位置時會以非 0 結束。
+做法與 `lib/gen_profiled.py` 相同：新版讀 `ai_unity.c` 展開後的各模組，基準若是拆分前的單檔 `ai.c` 則直接讀，只在存取處插一個計數器、原始碼本身不修改、每次執行重新生成。探針找不到對應位置時會以非 0 結束。
 
 兩版若是同一種實作（都查表或都掃描），比值恆為 1.00x，腳本會直接說基準選錯了。
 

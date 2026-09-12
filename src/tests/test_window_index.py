@@ -1,9 +1,10 @@
 """windowIdx 增量索引的不變量測試。
 
-`ai.c` 在 `placeStone` / `removeStone` 之後，`#ifdef WINDOW_IDX_CHECK` 包住一段
-全盤 × 4 方向 × 兩視角的 `assert`：增量修正後的 `windowIdx` 必須等於當場對
-`encodeWindow` 重算的結果。預設編譯不带這個巨集（保持搜索速度），所以本檔
-另外編譯一顆帶 `-DWINDOW_IDX_CHECK` 的 debug DLL 來跑。
+`boardstate.c` 在 `placeStone` / `removeStone` 之後，`#ifdef WINDOW_IDX_CHECK`
+包住一段全盤 × 4 方向 × 兩視角的 `assert`：增量修正後的 `windowIdx` 必須等於
+當場對 `encodeWindow` 重算的結果。預設編譯不带這個巨集（保持搜索速度），
+所以本檔另外編譯一顆帶 `-DWINDOW_IDX_CHECK` 的 debug DLL 來跑。這個巨集的
+`#ifdef` 區段橫跨 `boardstate.c` 與 `lines.c` 兩個模組，要對整個編譯命令生效。
 
 `assert()` 失敗會呼叫 `abort()` 直接砍掉呼叫它的行程——若直接在 pytest 的
 行程裡用 ctypes 呼叫，一旦踩雷整個測試套件就跟著死。所以每個場景都用
@@ -14,10 +15,12 @@
 test_ai_opening.py 的中局佈局（走 miniMax／findBestMove 的 2 個賦值點），
 兩者合起來才會踩過全部 12 處落子/撤銷入口。
 
-需要先能編譯共享庫：
-    cd src && gcc -shared -o ai.dll -fPIC ai.c
+需要先能編譯共享庫（本檔的 fixture 會自動用 src/lib/*.c 排除 ai_unity.c 後編譯，
+不需要手動執行）：
+    cd src && gcc -I lib -shared -o ai.dll -fPIC -DWINDOW_IDX_CHECK lib/zobrist.c lib/pattern.c lib/boardstate.c lib/lines.c lib/eval.c lib/movegen.c lib/vcf.c lib/search.c ai.c
 找不到 gcc 時整個模組會被 skip。
 """
+import glob
 import os
 import platform
 import shutil
@@ -28,6 +31,7 @@ import textwrap
 import pytest
 
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LIB_DIR = os.path.join(SRC_DIR, "lib")
 DEBUG_DIR = os.path.join(SRC_DIR, "_window_idx_debug_build")
 
 
@@ -76,10 +80,18 @@ def debug_dll():
     """
     os.makedirs(DEBUG_DIR, exist_ok=True)
     out_path = os.path.join(DEBUG_DIR, _lib_filename(f"debug_{os.getpid()}"))
-    src_path = os.path.join(SRC_DIR, "ai.c")
+    # WINDOW_IDX_CHECK 的 #ifdef 區段橫跨 boardstate.c 與 lines.c 兩個模組，
+    # 巨集要對整個編譯命令生效，不能只傳單一來源檔。排除 ai_unity.c：
+    # 它自己 #include 了下面這些同名 .c，一起編會變成重複定義
+    lib_paths = sorted(
+        p for p in glob.glob(os.path.join(LIB_DIR, "*.c"))
+        if os.path.basename(p) != "ai_unity.c"
+    )
+    src_paths = lib_paths + [os.path.join(SRC_DIR, "ai.c")]
     try:
         result = subprocess.run(
-            [GCC, "-shared", "-o", out_path, "-fPIC", "-DWINDOW_IDX_CHECK", src_path],
+            [GCC, "-I", LIB_DIR, "-shared", "-o", out_path, "-fPIC",
+             "-DWINDOW_IDX_CHECK", *src_paths],
             capture_output=True, text=True,
         )
     except OSError as e:

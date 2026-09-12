@@ -4,12 +4,13 @@
 而且直接對應改動的本質：逐格掃描遇對手子或連續兩空格就 break，查表版每方向必須掃滿 10 格
 才能得到索引，索引版（`idxValid` 分支）改成直接讀 `windowIdx`，每方向只需一次陣列存取。
 
-做法與 gen_profiled.py 同一套路：讀 ai.c，只在盤面存取處插一個計數器，ai.c 本身不修改，
-每次執行重新生成。
+做法與 gen_profiled.py 同一套路：讀原始碼，只在盤面存取處插一個計數器，原始碼本身
+不修改，每次執行重新生成。ai.c 拆成多檔後，「新版」預設是 ai_unity.c（展開各模組
+.c 再插樁）；「基準」通常來自拆分前的歷史提交，本身就是單檔 ai.c，不必展開。
 
 用法（在 src/_bench/ 下）：
-    python bench.py cells old.c [new.c]        # new 預設 ../ai.c
-    python bench.py cells                      # 基準預設 HEAD:src/ai.c
+    python bench.py cells old.c [new.c]        # new 預設 ../lib/ai_unity.c
+    python bench.py cells                      # 無基準時報錯，要求明確指定
 
 基準要選「只差你這一項」的版本（見 README 陷阱 2）；兩版若是同一種實作，比值恆為 1.00x。
 """
@@ -19,9 +20,13 @@ import shutil
 import subprocess
 import sys
 
+import unity
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                       # src/_bench/
-DEFAULT_NEW = os.path.join(ROOT, "..", "ai.c")
+SRC_DIR = os.path.join(ROOT, "..")                  # src/
+LIB_DIR = os.path.join(SRC_DIR, "lib")
+DEFAULT_NEW = os.path.join(LIB_DIR, "ai_unity.c")
 # 中間檔放本目錄而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
 WORKDIR = os.path.join(ROOT, "_count_cells_tmp")
 
@@ -93,9 +98,15 @@ IDX_SETUP = "rebuildWindowIndex(board); idxValid = 1;"
 
 
 def board_max(src):
+    # BOARD_MAX 定義在 types.h，unity 展開只拉 #include "*.c"、不拉 .h，
+    # 展開後的文字裡找不到這個 #define；直接讀 types.h 本身
+    types_h = os.path.join(LIB_DIR, "types.h")
+    if os.path.exists(types_h):
+        with open(types_h, encoding="utf-8") as f:
+            src = f.read()
     m = re.search(r"^#define\s+BOARD_MAX\s+(\d+)", src, re.M)
     if not m:
-        sys.exit("count_cells: ai.c 抽不到 BOARD_MAX，定義格式可能改了。")
+        sys.exit("count_cells: 抽不到 BOARD_MAX，定義格式可能改了。")
     return int(m.group(1))
 
 
@@ -109,21 +120,29 @@ def instrument(src, label):
             kind = name
             break
     if kind is None:
-        sys.exit("count_cells: %s 找不到任何盤面存取點，探針要跟著 ai.c 更新。" % label)
+        sys.exit("count_cells: %s 找不到任何盤面存取點，探針要跟著原始碼更新。" % label)
     if kind == "索引":
-        # 驅動程式要能從外部打開 idxValid、呼叫 rebuildWindowIndex，
-        # 兩者在 ai.c 裡是 static，只在這份中間檔拿掉，ai.c 本身不動
+        # 驅動程式要能從外部打開 idxValid、呼叫 rebuildWindowIndex。單檔時代
+        # 兩者是 static，只在這份中間檔拿掉；拆檔後 boardstate.c 已把它們透過
+        # boardstate.h 匯出，不再是 static，substitution 找不到東西是正常的
         out, n1 = re.subn(r"^static bool idxValid", "bool idxValid", out, count=1, flags=re.M)
         out, n2 = re.subn(r"^static void rebuildWindowIndex", "void rebuildWindowIndex", out, count=1, flags=re.M)
-        if n1 != 1 or n2 != 1:
+        already_exported = re.search(r"^bool idxValid\b", out, re.M) and \
+                            re.search(r"^void rebuildWindowIndex\(", out, re.M)
+        if (n1 != 1 or n2 != 1) and not already_exported:
             sys.exit("count_cells: %s 找不到 idxValid/rebuildWindowIndex 的宣告，"
                      "驅動程式的外部連結假設可能過期了。" % label)
     return "extern long cells_read;\n" + out, kind
 
 
 def measure(src_path, stones, workdir):
-    with open(src_path, encoding="utf-8") as f:
-        src = f.read()
+    # unity build（一串 #include "*.c"）要先展開；歷史提交取出的舊版單檔
+    # ai.c 本身就是完整原始碼，不含 #include "*.c"，原樣使用
+    if os.path.basename(src_path) == "ai_unity.c":
+        src = unity.expand(src_path)
+    else:
+        with open(src_path, encoding="utf-8") as f:
+            src = f.read()
     label = os.path.basename(src_path)
     bm = board_max(src)
 
@@ -140,7 +159,7 @@ def measure(src_path, stones, workdir):
                           "idx_protos": idx_protos, "idx_setup": idx_setup})
 
     exe = os.path.join(workdir, "probe.exe")
-    build = subprocess.run(["gcc", "-O2", "-o", exe, drv, core],
+    build = subprocess.run(["gcc", "-O2", "-I", LIB_DIR, "-o", exe, drv, core],
                            capture_output=True, text=True)
     if build.returncode != 0:
         sys.exit("count_cells: 編譯 %s 失敗\n%s" % (label, build.stderr))
@@ -154,26 +173,20 @@ def measure(src_path, stones, workdir):
 
 def main():
     new_src = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_NEW
-    if len(sys.argv) > 1:
-        old_src = sys.argv[1]
-        old_label = os.path.basename(old_src)
-    else:
-        old_src = None
-        old_label = "HEAD:src/ai.c"
+    if len(sys.argv) <= 1:
+        # ai.c 拆成多檔後不再有單一「HEAD 版本」可當隱含預設，
+        # 拆分前後的比較意義也不同，要求使用者自己選定基準提交
+        sys.exit("count_cells: 未指定基準版本。用法：python bench.py cells old.c [new.c]\n"
+                 "  基準通常來自歷史提交，例如：\n"
+                 "    git show <commit>:src/ai.c > old.c\n"
+                 "    python bench.py cells old.c")
+    old_src = sys.argv[1]
+    old_label = os.path.basename(old_src)
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     os.makedirs(WORKDIR)
     try:
         workdir = WORKDIR
-        if old_src is None:
-            old_src = os.path.join(workdir, "head.c")
-            head = subprocess.run(["git", "show", "HEAD:src/ai.c"],
-                                  capture_output=True, text=True, cwd=HERE)
-            if head.returncode != 0:
-                sys.exit("count_cells: 取不到 HEAD:src/ai.c\n" + head.stderr)
-            with open(old_src, "w", encoding="utf-8") as f:
-                f.write(head.stdout)
-
         rows = []
         old_kind = new_kind = None
         for stones in STONE_COUNTS:

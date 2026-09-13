@@ -16,6 +16,9 @@ extern const int POW3[10];
 // 編解碼順序必須一致，對應的解碼在 initPatternTable
 int encodeWindow(int board[BOARD_MAX][BOARD_MAX], int x, int y, int dx, int dy, int player);
 
+// 四：能再加一子成五。回傳成五點的個數，兩個以上即活四
+int fivePoints(int cells[11]);
+
 // [0:0, 1:0, 2:活二，3:活三，4:活四，5:五連，6:眠二，7:純衝四眠三，8:衝四，9:跳活三，10:跳活四，11:偏活跳三，12:跳四，13:偏活三，14:純衝四跳三，15:長連]
 /* 回傳中心（cells[5] 為 SELF）在此 11 格窗口形成的最強棋型 index，無棋型回傳 0 */
 int classifyWindow(int cells[11]);

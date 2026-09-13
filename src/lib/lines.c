@@ -128,6 +128,28 @@ static int countFours(int cells[11]) {
     return n;
 }
 
+// 找出一個方向窗口內、能讓該方向構成三（tp>=1）的活四點盤面座標
+// 回傳找到的活四點數（0~2），座標寫進 outX/outY；不判斷同時成五，那件事
+// 交給呼叫端對這個座標跑一次 judgeMove（成五回傳 2，天然合法）
+static int threeSpotsInDirection(int board[BOARD_MAX][BOARD_MAX], int x, int y,
+                                  int dx, int dy, int player, int outX[2], int outY[2]) {
+    int cells[11];
+    loadWindow(board, x, y, dx, dy, player, cells);
+    int n = 0;
+    for (int i = 0; i < 11 && n < 2; i++) {
+        if (cells[i] != CELL_EMPTY) continue;
+        cells[i] = CELL_SELF;
+        int fp = fivePoints(cells);
+        cells[i] = CELL_EMPTY;
+        if (fp < 2) continue;                 // 未達活四門檻，不是這個三的活四點
+        int off = i - 5;
+        outX[n] = x + off * dx;
+        outY[n] = y + off * dy;
+        n++;
+    }
+    return n;
+}
+
 /* 落子判定：checkUnValid 與 endGame 共用，避免規則邏輯分散而漂移。
    回傳： 2 = 勝著（五連；白棋長連也算勝）
           1 = 一般合法著法
@@ -140,12 +162,38 @@ int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
     if (line[5] > 0) return 2;                       // 五連即勝，優先於一切禁手
     if (line[15] > 0) return player == 2 ? 2 : -6;   // 長連只對白棋算勝
     if (player == 1) {
-        // 三三仍只認碼 3/9，未依 RIF 放寬到碼 11/13。RIF 的三是「能再加一子成活四」，
-        // 一種填法就夠，照字面該把 tp==1 的 11/13 也算進來；但 threePoints 依賴的
-        // fivePoints 沒有「恰好五」守衛，會把填了變六連的點也當成五點，
-        // 因此 tp>=1 並不等於真的能成活四，放寬會擋掉合法著法。
-        // 要放寬得先讓 makesFive/fivePoints 認得長連，見 renju-rules.md
-        if ((line[3] + line[9]) >= 2) return -3;
+        // 三是「能再加一子成活四」，一種填法就夠，碼 11/13（tp==1）依字面也算三
+        // fivePoints 已加恰好五守衛，tp>=1 才等於真能成活四
+        if ((line[3] + line[9] + line[11] + line[13]) >= 2) {
+            // 9.3：雙三只在兩個以上的三都能推進到合法活四時才禁手；
+            // 逐方向找出貢獻三的活四點，先真的落下 (x,y) 這顆子，
+            // 讓活四點的窗口能看見它，再模擬落子遞迴判定該點合不合法
+            // 搜索期間 idxValid==true 時 checkLine 只讀 windowIdx 不看 board，
+            // 必須走 placeStone/removeStone 同步索引；冷路徑 windowIdx 未經
+            // rebuildWindowIndex 初始化，不能對它做增量調整，直接寫 board 即可
+            // （encodeWindow 即時重掃 board，不依賴 windowIdx）
+            int dxT[] = {1, 1, 0, -1};
+            int dyT[] = {0, 1, 1, 1};
+            int advanceable = 0;
+            if (idxValid) placeStone(board, x, y, player);
+            else board[y][x] = player;
+            for (int i = 0; i < 4 && advanceable < 2; i++) {
+                int cellsT[11];
+                loadWindow(board, x, y, dxT[i], dyT[i], player, cellsT);
+                int code = classifyWindow(cellsT);
+                if (code != 3 && code != 9 && code != 11 && code != 13) continue;
+                int spotX[2], spotY[2];
+                int n = threeSpotsInDirection(board, x, y, dxT[i], dyT[i], player, spotX, spotY);
+                for (int k = 0; k < n; k++) {
+                    // 活四點此時仍是空格，judgeMove 自己會假設落子在此判定
+                    int r = judgeMove(board, spotX[k], spotY[k], player);
+                    if (r >= 1) { advanceable++; break; }   // 這個三能推進到合法活四
+                }
+            }
+            if (idxValid) removeStone(board, x, y);
+            else board[y][x] = 0;
+            if (advanceable >= 2) return -3;
+        }
         // 四四逐方向數四，碼加總會把同一條線上的兩個四算成一個，見 renju-rules.md
         // 碼只當快篩：碼為 0 時該方向必無四，反向不成立
         if (line[4] + line[8] + line[10] + line[12] > 0) {

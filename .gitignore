@@ -48,3 +48,6 @@ test.exe
 src/_bench/lib/ai_profiled_core.generated.c
 # bench.py 的中間目錄，跑完就刪，異常中斷時可能殘留
 src/_bench/_count_*_tmp/
+# Texel tuning 中間產物：可用 datagen.py/features.py 重新產生
+src/_bench/texel/games16.txt
+src/_bench/texel/train16.npz

@@ -44,11 +44,8 @@ wuziqi.py
 test.c
 test.exe
 
-# 由 src/_bench/lib/gen_profiled.py 從 ai.c 生成，不入版控
 src/_bench/lib/ai_profiled_core.generated.c
-# bench.py 的中間目錄，跑完就刪，異常中斷時可能殘留
 src/_bench/_count_*_tmp/
-# datagen.py/features_pos.py 等產生的棋譜與特徵：綁定生成當下的 ai.dll，
-# 換過 DLL 就該重跑，不管檔名是什麼都不入版控；tuned*.json 調參結果例外，予以保留
 src/_bench/**/games*.txt
 src/_bench/**/*.npz
+src/_bench/**/*.dllhash

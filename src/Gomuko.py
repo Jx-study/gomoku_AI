@@ -439,6 +439,12 @@ class GomokuGame:
         time.sleep(1)
 
         while True:
+            # 盤面下滿、無人連五：和局，必須在呼叫 aiRound 前擋下
+            # 已無空格可下時 aiRound 找不到合法走法，會被誤判成 AI 犯規中止。
+            if len(self.board.moves_history) == const.BOARD_MAX * const.BOARD_MAX:
+                self.window.update_notice("棋盤下滿，和局!")
+                break
+
             # 輪到誰下由 roundCounter 推導，不另外用變數追蹤：黑棋固定在奇數手、
             # 白棋在偶數手。悔棋是在 operation_button() 內部改動 roundCounter 的，
             # 那裡碰不到這個迴圈的區域變數；若另存一份 current_player，撤銷奇數

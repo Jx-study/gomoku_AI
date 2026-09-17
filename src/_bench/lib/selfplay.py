@@ -111,6 +111,8 @@ def play_game(black, white, opening, verbose=True):
     rc = len(opening) + 1
     engines = {1: black, 2: white}
     while rc <= MAX_ROUNDS:
+        if len(moves) == BOARD_MAX * BOARD_MAX:  # 盤面下滿、無人連五：和局，不算非法
+            return 0, moves, 'boardfull'
         p = 1 if rc % 2 == 1 else 2
         cb = CBoard()
         for i in range(BOARD_MAX):

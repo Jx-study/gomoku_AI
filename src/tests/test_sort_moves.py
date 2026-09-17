@@ -123,3 +123,68 @@ class TestOpenJumpThreeDefenseIsCandidateGenerated:
         line = (ctypes.c_int * 16)()
         lib.checkLine(ctypes.byref(board), 3, 9, WHITE, line)
         assert line[11] == 1, f"(3,9) 的棋型應為碼 11（偏活跳三），實際 line={list(line)}"
+
+
+class TestSortMovesNeverEmptyWhenLegalMoveExists:
+    """殘局深處會出現「僅存空格全是 0 分孤立點」的局面：quickEvaluate 對這些
+    點的四個方向都連不出任何棋型（連活二都沒有），通用評估路徑的
+    `if (score != 0)` 把它們全部濾掉，sortMoves 回傳空列表。
+
+    真實案例：datagen 自對弈 191 手時觸發，findBestMoveImpl 因此不寫入
+    bestX/bestY，呼叫端把這個「沒回傳」誤判成非法落子判負——棋盤當時還有
+    34 個合法空格可下，不是真的下滿。
+
+    最小重現：棋盤交錯填滿到只剩一個孤立空格，任何方向都連不出同色線，
+    quickEvaluate 對該點必為 0 分，但它仍是唯一且合法的走法。
+    """
+
+    @staticmethod
+    def _checkerboard_with_one_gap(board_max, gap, phase=0):
+        """交錯填滿棋盤，只留 gap 這一格空著；任何直線都不會有連續同色，
+        確保唯一空格的 quickEvaluate 為 0 分（不靠近任何棋型）。
+
+        phase 翻轉黑白相位：gap 對兩色的禁手判定不同（同一相位下 (0,0) 對
+        黑棋可能剛好落在長連上），兩個顏色各自用測過確實合法的相位。"""
+        board = [[0] * board_max for _ in range(board_max)]
+        for x in range(board_max):
+            for y in range(board_max):
+                if (x, y) == gap:
+                    continue
+                board[y][x] = 1 if (x + y + phase) % 2 == 0 else 2
+        return board
+
+    def test_white_gets_the_only_remaining_legal_point(self, sort_moves):
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap, phase=0)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, WHITE)
+        assert moves, (
+            f"棋盤僅剩 {gap} 一個合法空格，sortMoves 卻回傳空列表——"
+            "候選被 quickEvaluate 的 0 分濾掉，沒有保底邏輯"
+        )
+        assert moves[0][:2] == gap
+
+    def test_black_gets_the_only_remaining_legal_point(self, sort_moves):
+        """同一情境換黑棋（用 phase=1 讓 (0,0) 對黑棋合法而非禁手）：
+        保底邏輯必須也過黑棋禁手檢查，不能繞過規則，但合法時仍要回傳。"""
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap, phase=1)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, BLACK)
+        assert moves, (
+            f"棋盤僅剩 {gap} 一個合法空格，sortMoves 卻回傳空列表（黑棋視角）"
+        )
+        assert moves[0][:2] == gap
+
+    def test_black_forbidden_gap_still_returns_empty(self, sort_moves):
+        """同一張棋盤換黑棋視角：(0,0) 對黑棋是禁手（checkUnValid != 1），
+        保底邏輯必須尊重這點、不能為了「不回傳空列表」就塞一個非法點進去。
+        這裡刻意驗證反面：唯一空格違反禁手時，sortMoves 仍應回傳空列表。
+        """
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, BLACK)
+        assert not moves, (
+            f"{gap} 對黑棋是禁手，保底邏輯不應該把非法點塞進候選列表：{moves}"
+        )

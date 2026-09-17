@@ -190,10 +190,19 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     }
 
     // 錯誤檢查和排序
+    // 保底：殘局深處可能所有合法點都是 0 分孤立點，上面的 if (score != 0)會全部濾掉；
+    // 此時仍要回傳一個合法點，否則呼叫端收不到落子座標
     if (*count == 0) {
-        printf("Error: No valid moves found! Board position might be invalid.\n");
-        return;
+        for (int x = minX; x <= maxX && *count == 0; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
+                if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+                moves[(*count)++] = (Move){x, y, 0};
+                break;
+            }
+        }
     }
+    if (*count == 0) return;  // 搜索框內真的無合法點，呼叫端須自行處理（例如判和）
 
     qsort(moves, *count, sizeof(Move), Big_Small);
 }

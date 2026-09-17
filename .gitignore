@@ -48,6 +48,7 @@ test.exe
 src/_bench/lib/ai_profiled_core.generated.c
 # bench.py 的中間目錄，跑完就刪，異常中斷時可能殘留
 src/_bench/_count_*_tmp/
-# Texel tuning 中間產物：可用 datagen.py/features.py 重新產生
-src/_bench/texel/games16.txt
-src/_bench/texel/train16.npz
+# datagen.py/features_pos.py 等產生的棋譜與特徵：綁定生成當下的 ai.dll，
+# 換過 DLL 就該重跑，不管檔名是什麼都不入版控；tuned*.json 調參結果例外，予以保留
+src/_bench/**/games*.txt
+src/_bench/**/*.npz

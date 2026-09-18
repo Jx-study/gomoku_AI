@@ -176,3 +176,58 @@ class TestSortMovesNeverEmptyWhenLegalMoveExists:
         assert not moves, (
             f"{gap} 對黑棋是禁手，保底邏輯不應該把非法點塞進候選列表：{moves}"
         )
+
+
+@pytest.fixture(scope="module")
+def ai_round():
+    """回傳 ai_round(stones, player, round_counter) -> (x, y)。"""
+    lib = ctypes.CDLL(LIB_PATH)
+    lib.getBoardMax.restype = ctypes.c_int
+    board_max = lib.getBoardMax()
+    board_type = (ctypes.c_int * board_max) * board_max
+
+    lib.initZobristTable()
+    lib.initTranspositionTable()
+    lib.aiRound.restype = None
+    lib.aiRound.argtypes = [
+        ctypes.POINTER(board_type), ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+    ]
+
+    def _call(stones, player, round_counter):
+        board = board_type()
+        for x, y, colour in stones:
+            board[y][x] = colour
+        # 灌入髒值：未初始化的座標會原樣留下，測得出來
+        bestx, besty = ctypes.c_int(12345), ctypes.c_int(6789)
+        lib.aiRound(ctypes.byref(board), player, round_counter,
+                    ctypes.byref(bestx), ctypes.byref(besty))
+        return bestx.value, besty.value
+
+    return _call
+
+
+class TestAiRoundSentinelWhenNoLegalMove:
+    """無合法走法時 aiRound 必須回傳 (-1, -1)，不能留下未初始化的座標"""
+
+    def test_returns_sentinel_when_only_gap_is_forbidden(self, ai_round):
+        """唯一空格對黑棋是禁手：sortMoves 回傳空列表，aiRound 走到哨兵路徑。
+
+        呼叫端據此判和；若沿用未初始化的堆疊內容，會被誤判成非法落子判負。
+        """
+        gap = (0, 0)
+        board = TestSortMovesNeverEmptyWhenLegalMoveExists._checkerboard_with_one_gap(15, gap)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        x, y = ai_round(stones, BLACK, len(stones) + 1)
+        assert (x, y) == (-1, -1), (
+            f"無合法走法時應回傳哨兵 (-1, -1)，實際 ({x}, {y})"
+        )
+
+    def test_returns_real_move_when_a_legal_point_exists(self, ai_round):
+        """反面：仍有合法點時不能誤回哨兵"""
+        gap = (0, 0)
+        board = TestSortMovesNeverEmptyWhenLegalMoveExists._checkerboard_with_one_gap(
+            15, gap, phase=0)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        x, y = ai_round(stones, WHITE, len(stones) + 1)
+        assert (x, y) == gap, f"唯一合法點是 {gap}，實際回傳 ({x}, {y})"

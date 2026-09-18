@@ -2,21 +2,41 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*", "*-v[0-9]*"]
   workflow_dispatch:   # 手動觸發：只建置不發佈，用於驗證流程
 
 permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # 一個平台失敗時其他仍跑完，第一次除錯能一次看到三邊的問題
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            lib: ai.dll
+            artifact: Gomoku-windows.exe
+          - os: ubuntu-latest
+            lib: ai.so
+            artifact: Gomoku-linux
+          - os: macos-latest
+            lib: ai.dylib
+            artifact: Gomoku-macos
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # graphics 是 tkinter 的包裝，ubuntu runner 預設沒有 tk
+      - name: Install tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk tk-dev
 
       - name: Compile AI engine
         working-directory: src
@@ -28,7 +48,7 @@ jobs:
       # 門檻排在打包之前，引擎有問題就不該產出執行檔
       - name: Smoke test
         working-directory: src
-        run: python utils/smoke_test.py ./ai.dll
+        run: python utils/smoke_test.py ./${{ matrix.lib }}
 
       - name: Run tests
         run: pytest
@@ -38,32 +58,71 @@ jobs:
         working-directory: src
         run: pyinstaller Gomoku.spec
 
+      # arm64 要求二進位至少有簽章，未簽章的會被 kernel 直接拒絕執行。
+      # 這不解決 Gatekeeper quarantine，那要使用者自己繞過，見 release notes。
+      - name: Ad-hoc sign (macOS)
+        if: runner.os == 'macOS'
+        working-directory: src/dist
+        run: codesign -s - --force ${{ matrix.artifact }}
+
       # 前面的關卡測的都是原始碼樹，打包漏檔案不會被發現。
       # 不實際啟動 GUI：CI 沒有互動桌面，視窗跑不起來不代表打包有問題。
       - name: Verify packaged executable
-        run: python utils/verify_bundle.py dist/Gomoku-windows.exe
         working-directory: src
+        run: python utils/verify_bundle.py dist/${{ matrix.artifact }}
 
-      - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: src/dist/Gomoku-windows.exe
+          name: ${{ matrix.artifact }}
+          path: src/dist/${{ matrix.artifact }}
+          if-no-files-found: error   # 空包直接失敗，不要靜默上傳
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
           # release-please 已建好含 CHANGELOG 的 Release，這裡只附加安裝說明。
           # 不加 append_body 的話 body 會覆蓋掉 CHANGELOG。
           append_body: true
           body: |
             ## 安裝與執行 / Installation
 
-            下載 `Gomoku-windows.exe` 後直接雙擊執行，不需安裝 Python。
-            首次執行可能被 Windows SmartScreen 攔下（未簽章執行檔），點「其他資訊」→「仍要執行」即可。
+            | 平台 Platform | 檔案 File |
+            |---|---|
+            | Windows | `Gomoku-windows.exe` |
+            | macOS | `Gomoku-macos` |
+            | Linux | `Gomoku-linux` |
 
-            Download `Gomoku-windows.exe` and double-click to run. No Python installation required.
-            Windows SmartScreen may block it on first launch (unsigned executable): click "More info" → "Run anyway".
+            下載後直接執行，不需安裝 Python。
+            Download and run directly. No Python installation required.
 
-      - name: Upload artifact (manual run only)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Gomoku-windows-testbuild
-          path: src/dist/Gomoku-windows.exe
+            ### Windows
+
+            首次執行可能被 SmartScreen 攔下（未簽章執行檔），點「其他資訊」→「仍要執行」即可。
+            SmartScreen may block it on first launch (unsigned executable): click "More info" → "Run anyway".
+
+            ### macOS
+
+            未簽章（無 Apple Developer ID），下載後先清掉 quarantine 標記：
+            Unsigned build (no Apple Developer ID). Clear the quarantine flag first:
+
+            ```
+            xattr -cr Gomoku-macos && chmod +x Gomoku-macos
+            ```
+
+            ### Linux
+
+            ```
+            chmod +x Gomoku-linux
+            ```
+
+            > macOS 與 Linux 版本未經實機測試 / macOS and Linux builds are untested.

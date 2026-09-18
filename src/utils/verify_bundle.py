@@ -5,14 +5,18 @@ CI 前面的關卡測的都是原始碼樹，PyInstaller 漏收 DLL 或模組不
 
 用法：python utils/verify_bundle.py <執行檔路徑>
 """
+import platform
 import sys
 import tempfile
 from pathlib import Path
 
 from PyInstaller.archive.readers import CArchiveReader, ZlibArchiveReader
 
+# 副檔名須與 utils/build.py 的 EXT_BY_SYSTEM 一致
+LIB_BY_SYSTEM = {"Windows": "ai.dll", "Linux": "ai.so", "Darwin": "ai.dylib"}
+
 # 資料檔與共享庫在 CArchive 頂層，純 Python 模組在 PYZ 內
-REQUIRED_FILES = ("ai.dll", "200w.gif")
+REQUIRED_FILES = (LIB_BY_SYSTEM[platform.system()], "200w.gif")
 REQUIRED_MODULES = ("graphics", "game_state")
 
 

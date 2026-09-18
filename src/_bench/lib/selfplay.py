@@ -122,6 +122,10 @@ def play_game(black, white, opening, verbose=True):
         engines[p].aiRound(ctypes.byref(cb), p, rc, ctypes.byref(bx), ctypes.byref(by))
         x, y = bx.value, by.value
 
+        # 哨兵值：引擎找不到合法走法，不是犯規，當和局處理
+        if x == -1 and y == -1:
+            return 0, moves, 'nomove'
+
         if not (0 <= x < BOARD_MAX and 0 <= y < BOARD_MAX) or board[y][x] != 0:
             if verbose:
                 print(f"    ILLEGAL move ({x},{y}) by player {p} at round {rc}")

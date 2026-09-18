@@ -201,7 +201,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
             }
         }
     }
-    if (*count == 0) return;  // 搜索框內真的無合法點，呼叫端須自行處理（例如判和）
+    if (*count == 0) return;  // 搜索框內真的無合法點，findBestMove 會留下 -1 哨兵
 
     qsort(moves, *count, sizeof(Move), Big_Small);
 }

@@ -31,9 +31,11 @@ gomoku_AI/
 
 ## 快速開始
 
-### 方式一：執行打包好的程式
-1. 下載 `Player_Vs_Ai/version_4/Gomuko.exe`
-2. 雙擊運行即可開始遊戲
+### 方式一：下載執行檔（推薦）
+1. 到 [Releases](../../releases/latest) 下載 `Gomoku-windows.exe`
+2. 雙擊執行，不需安裝 Python
+
+首次執行可能被 Windows SmartScreen 攔下（未簽章執行檔），點「其他資訊」→「仍要執行」即可。
 
 ### 方式二：從源碼運行
 ```bash

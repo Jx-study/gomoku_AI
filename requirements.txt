@@ -1,3 +1,4 @@
 graphics.py
 opencv-python
 pytest
+pyinstaller

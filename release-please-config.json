@@ -4,6 +4,7 @@
     ".": {
       "release-type": "simple",
       "package-name": "gomoku-ai",
+      "include-component-in-tag": false,
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "perf", "section": "Performance Improvements" },

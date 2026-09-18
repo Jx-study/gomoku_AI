@@ -190,8 +190,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     }
 
     // 錯誤檢查和排序
-    // 保底：殘局深處可能所有合法點都是 0 分孤立點，上面的 if (score != 0)會全部濾掉；
-    // 此時仍要回傳一個合法點，否則呼叫端收不到落子座標
+    // 保底：0 分孤立點會被上面的 if 濾光，仍需回傳合法點
     if (*count == 0) {
         for (int x = minX; x <= maxX && *count == 0; x++) {
             for (int y = minY; y <= maxY; y++) {

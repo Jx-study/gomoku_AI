@@ -2,14 +2,27 @@ from graphics import*
 import time     # 延遲執行+記錄運行時間
 import ctypes   # 調用C語言函式庫
 import os, sys
+import platform
 import tkinter as tk
 from tkinter import Scrollbar
 
 from game_state import GameState   # 盤面/輪次/開局規則/悔棋（有測試涵蓋）
 
+# PyInstaller onefile 解壓到 sys._MEIPASS，與雙擊時的工作目錄不同
+def _base_dir():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.abspath(os.path.dirname(__file__))
+
+
+# 副檔名須與 utils/build.py 的 EXT_BY_SYSTEM 一致
+def _lib_filename():
+    return {'Windows': 'ai.dll', 'Linux': 'ai.so', 'Darwin': 'ai.dylib'}[platform.system()]
+
+
 # 加載共享庫
-# 必須在 const 之前載入：棋盤大小由 ai.c 決定，const 需要先取得該值。
-ai_lib = ctypes.CDLL('./ai.dll')
+# 必須在 const 之前載入：棋盤大小由 types.h 決定，const 需要先取得該值。
+ai_lib = ctypes.CDLL(os.path.join(_base_dir(), _lib_filename()))
 ai_lib.getBoardMax.restype = ctypes.c_int
 
 # 定義常量+全域變數
@@ -205,11 +218,7 @@ class GameWindow:
         self.txt_time = self.create_text(Point(const.MARGIN // 2, const.BOARD_END - 30), 12, (255, 0, 0), 'courier', 'normal')
         
         # 加載圖片
-        if getattr(sys, 'frozen', False):
-            bundle_dir = sys._MEIPASS
-        else:
-            bundle_dir = os.path.abspath(os.path.dirname(__file__))
-        img_path = os.path.join(bundle_dir, "200w.gif")
+        img_path = os.path.join(_base_dir(), "200w.gif")
         img = Image(Point(50, 50), img_path)
         img.draw(self.win)
         

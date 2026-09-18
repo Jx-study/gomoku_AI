@@ -33,10 +33,10 @@ jobs:
       - name: Run tests
         run: pytest
 
-      # 打包設定全在 Gomuko.spec，改 UI 或資源檔不必動這份 workflow
+      # 打包設定全在 Gomoku.spec，改 UI 或資源檔不必動這份 workflow
       - name: Build executable
         working-directory: src
-        run: pyinstaller Gomuko.spec
+        run: pyinstaller Gomoku.spec
 
       # 前面的關卡測的都是原始碼樹，打包漏檔案不會被發現。
       # 不實際啟動 GUI：CI 沒有互動桌面，視窗跑不起來不代表打包有問題。

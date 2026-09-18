@@ -9,7 +9,7 @@ build/
 dist/
 *.egg-info/
 *.spec
-!src/Gomuko.spec
+!src/Gomoku.spec
 
 # PyInstaller
 *.manifest

@@ -1,4 +1,4 @@
-"""Gomuko.py 與狀態層的接線測試（不開視窗）。
+"""Gomoku.py 與狀態層的接線測試（不開視窗）。
 
 `test_game_state.py` 測的是規則本身；本檔測的是 GUI 層有沒有正確接上——
 `GameHistory` 委派、`roundCounter` property、禁手 callback。這一層曾經
@@ -6,7 +6,7 @@
 連下兩顆同色棋），所以規則測試不能取代它。
 
 透過在 import 前替換 `graphics` 模組來避免開視窗；找不到 ai.dll 時整個
-模組 skip（`Gomuko` 在 import 時就會載入共享庫）。
+模組 skip（`Gomoku` 在 import 時就會載入共享庫）。
 """
 import os
 import sys
@@ -45,19 +45,19 @@ def _install_fake_graphics():
 
 @pytest.fixture(scope="module")
 def gomuko():
-    """import Gomuko，但不開視窗。需要 ai.dll 已編譯。"""
+    """import Gomoku，但不開視窗。需要 ai.dll 已編譯。"""
     _install_fake_graphics()
     cwd = os.getcwd()
-    os.chdir(SRC_DIR)          # Gomuko.py 用相對路徑載入 ai.dll
+    os.chdir(SRC_DIR)          # Gomoku.py 用相對路徑載入 ai.dll
     if SRC_DIR not in sys.path:
         sys.path.insert(0, SRC_DIR)
     try:
-        import Gomuko
+        import Gomoku
     except OSError as exc:     # 找不到共享庫
         pytest.skip(f"無法載入 ai.dll：{exc}")
     finally:
         os.chdir(cwd)
-    return Gomuko
+    return Gomoku
 
 
 @pytest.fixture

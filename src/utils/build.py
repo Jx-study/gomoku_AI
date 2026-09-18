@@ -1,7 +1,7 @@
 """跨平台編譯腳本：把 lib/ 下的 C 模組與 ai.c 編成共享庫。
 
 輸出檔名依平台自動選副檔名（Windows: ai.dll，Linux: ai.so，macOS: ai.dylib），
-放在 src/ 根目錄，與 Gomuko.py 載入的路徑一致。
+放在 src/ 根目錄，與 Gomoku.py 載入的路徑一致。
 
 用法（在 src/ 下執行）：
     python utils/build.py

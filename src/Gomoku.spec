@@ -6,7 +6,7 @@ LIB = {"Windows": "ai.dll", "Linux": "ai.so", "Darwin": "ai.dylib"}[platform.sys
 NAME = {"Windows": "Gomoku-windows", "Linux": "Gomoku-linux", "Darwin": "Gomoku-macos"}[platform.system()]
 
 a = Analysis(
-    ['Gomuko.py'],
+    ['Gomoku.py'],
     pathex=[],
     binaries=[(LIB, '.')],
     datas=[('200w.gif', '.')],

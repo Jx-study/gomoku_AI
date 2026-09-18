@@ -24,8 +24,8 @@ def _lib_filename():
     if system == "Windows":
         return "ai.dll"
     if system == "Darwin":
-        return "libai.dylib"
-    return "libai.so"
+        return "ai.dylib"
+    return "ai.so"
 
 
 LIB_PATH = os.path.join(SRC_DIR, _lib_filename())

@@ -5,7 +5,7 @@
 ```
 gomoku_AI/
 ├── src/                    # 主力開發目錄
-│   ├── Gomuko.py          # 主程式（圖形界面人機對戰）
+│   ├── Gomoku.py          # 主程式（圖形界面人機對戰）
 │   ├── ai.c               # 對外接口（aiRound、vcfProbe、getBoardMax、getBounds）
 │   ├── ai.dll             # 編譯後產生的動態庫（需自行編譯）
 │   ├── competition_chess.py  # 競賽格式入口（OpenCV + 檔案 IPC）
@@ -31,9 +31,11 @@ gomoku_AI/
 
 ## 快速開始
 
-### 方式一：執行打包好的程式
-1. 下載 `Player_Vs_Ai/version_4/Gomuko.exe`
-2. 雙擊運行即可開始遊戲
+### 方式一：下載執行檔（推薦）
+1. 到 [Releases](../../releases/latest) 下載 `Gomoku-windows.exe`
+2. 雙擊執行，不需安裝 Python
+
+首次執行可能被 Windows SmartScreen 攔下（未簽章執行檔），點「其他資訊」→「仍要執行」即可。
 
 ### 方式二：從源碼運行
 ```bash
@@ -43,7 +45,7 @@ cd src/
 python utils/build.py
 
 # 運行遊戲
-python Gomuko.py
+python Gomoku.py
 ```
 
 也可以手動指定編譯指令（不要用 `*.c` 展開，`lib/ai_unity.c` 會造成重複定義）：
@@ -55,9 +57,9 @@ gcc -I lib -shared -o ai.dll -fPIC lib/zobrist.c lib/pattern.c lib/boardstate.c 
 ### 打包成可執行檔
 ```bash
 cd src/
-pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." --hidden-import graphics Gomuko.py
+pyinstaller --onefile --add-data "200w.gif;." --add-binary "ai.dll:." --hidden-import graphics Gomoku.py
 # 或使用預設 spec：
-pyinstaller Gomuko.spec
+pyinstaller Gomoku.spec
 ```
 
 ## 專案介紹

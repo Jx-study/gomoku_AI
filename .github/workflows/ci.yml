@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile AI engine
+        working-directory: src
+        run: python utils/build.py
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      # 排在 pytest 之前：pytest 找不到共享庫時是 skip 不是 fail
+      - name: Smoke test
+        working-directory: src
+        run: python utils/smoke_test.py ./ai.dll
+
+      - name: Run tests
+        run: pytest

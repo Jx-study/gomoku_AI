@@ -5,10 +5,14 @@
 開局 = RIF 三手 + 隨機 extra 手（引擎確定性，不隨機就只有 104 盤不同的棋）。
 輸出每行: 走法序列 x,y,p ... | nopen=N result=W
 
-illegal／boardfull 結尾不寫入（跟 dup 一樣只計入 reasons），最終行數可能略少於 games。
-boardfull 是雙方封鎖到棋盤下滿仍無人連五的和局，不是引擎異常，但這種僵局對訓練沒有價值。
+以下結尾不寫入，跟 dup 一樣只計入 reasons，最終行數可能略少於 games：
 
-斷點續跑：out 檔已存在時，以檔案現有行數當作「已完成局數」續跑到 games，不會重新生成前面已經有的局（task 的 seed 依全域 index 算，index 不重複用）。
+- illegal：引擎回傳越界或已有棋子的座標
+- boardfull：棋盤下滿仍無人連五的和局，不是引擎異常，但這種僵局對訓練沒有價值
+- foul：黑棋長連違規判負，勝負由規則裁定而非棋力
+- nomove：引擎回報無合法走法的和局
+
+斷點續跑：out 檔旁的 <out>.attempted 記錄已嘗試的 seed 數，續跑從該處接著跑到 games（task 的 seed 依全域 index 算，index 不重複用）。
 中途中斷、games 沒跑滿，直接用原指令重跑即可接著跑，不必砍掉重來。
 
 out 檔旁的 <out>.dllhash 記錄生成當下 ai.dll 的 sha256。
@@ -69,10 +73,17 @@ def main():
 
     dll_hash = _dll_hash(a.dll)
     hash_path = a.out + '.dllhash'
+    state_path = a.out + '.attempted'
     done = 0
     if os.path.exists(a.out):
-        with open(a.out) as f:
-            done = sum(1 for _ in f)
+        # 被過濾的局有 seed 卻沒有行，進度不能用行數代替
+        if os.path.exists(state_path):
+            done = int(open(state_path).read().strip() or 0)
+        else:
+            # 舊版檔案沒有 state，退回行數
+            done = sum(1 for _ in open(a.out))
+            print(f"{state_path} 不存在（舊版產生的檔案），暫以行數 {done} 當已嘗試數；"
+                  "本次續跑可能重放部分已完成的局，之後就會準確")
         if os.path.exists(hash_path) and open(hash_path).read().strip() != dll_hash:
             sys.exit(f"{a.out} 是用別的 ai.dll 生成的（雜湊對不上 {hash_path}），先手動處理再重跑")
     if done >= a.games:
@@ -85,11 +96,24 @@ def main():
 
     t0 = time.time()
     tasks = [(a.seed * 1_000_003 + i, lo, hi) for i in range(done, a.games)]
-    res_count, reasons, seen = {}, {}, set()
+    res_count, reasons = {}, {}
+    # 既有棋譜讀進 seen，讓 dedup 跨續跑有效
+    seen = set()
+    if os.path.exists(a.out):
+        for line in open(a.out):
+            seq = line.split('|')[0].split()
+            seen.add(tuple(tuple(int(v) for v in t.split(',')) for t in seq))
+
+    attempted = done
     with mp.Pool(a.jobs, _init, (os.path.abspath(a.dll), params)) as pool, open(a.out, 'a') as f:
-        for moves, nopen, w, reason in pool.imap_unordered(_task, tasks, chunksize=4):
+        # 依序取結果，attempted 才等於已完成的 seed 前綴
+        for moves, nopen, w, reason in pool.imap(_task, tasks, chunksize=4):
             reasons[reason] = reasons.get(reason, 0) + 1
-            if reason in ('illegal', 'boardfull'):
+            attempted += 1
+            # 被過濾的局也算嘗試過，進度先落盤
+            with open(state_path, 'w') as sf:
+                sf.write(f"{attempted}\n")
+            if reason in ('illegal', 'boardfull', 'foul', 'nomove'):
                 continue
             key = tuple(moves)
             if key in seen:  # 重複的對局不寫，避免同一盤棋重複計權

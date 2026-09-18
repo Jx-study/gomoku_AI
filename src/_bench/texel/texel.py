@@ -14,6 +14,8 @@ import json
 import numpy as np
 from scipy.optimize import minimize
 
+import engine
+
 L = np.array([1, 1, 2, 3, 4, 5, 2, 3, 4, 3, 4, 3, 4, 3, 3, 1])
 KS = list(range(2, 15))                 # evaluate 用到的棋型 index（含 5，但非終局恆為 0）
 TUNE_K = [2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14]
@@ -22,10 +24,14 @@ W_ATK, W_DEF, BONUS, DEF_NUM, EXTRA_NUM = 0, 15, 30, 35, 36
 NAMES = {2: '活二', 3: '活三', 4: '活四', 6: '眠二', 7: '純衝四眠三', 8: '衝四', 9: '跳活三',
          10: '跳活四', 11: '偏活跳三', 12: '跳四', 13: '偏活三', 14: '純衝四跳三'}
 
-DEFAULT = ([0, 0, 20, 7000, 20000, 9999999, 5, 500, 10000, 4000, 15000, 4000, 10000, 4000, 700] * 2
-           + [4000, 900, 1000, 100, 4000, 60, 10]
-           + [0, 0, 20, 7000, 20000, 9999999, 5, 500, 10000, 4000, 15000, 4000, 10000, 4000, 700] * 2
-           + [4000, 900, 1000, 100, 4000, 80, 10])
+
+def load_default(dll):
+    """向 DLL 查詢當前的 evalParams 預設值。
+
+    不寫死常數：eval.c 的預設值會隨每輪調參更新，寫死的副本漂移後
+    下面的對拍會拿舊值比對新 DLL，那道「必須全等才繼續」的保護就形同虛設。
+    """
+    return engine.get_params(engine.load(dll, 'texel_default'))
 
 
 class View:
@@ -98,7 +104,7 @@ def split(gid, seed=0):
 
 
 # 參數化：mode 決定哪些 C 參數綁在一起，回傳 (初值向量, 展開成 74 個 int 的函式)
-def make_param_map(mode, init=DEFAULT):
+def make_param_map(mode, init):
     if mode == 'untied':
         slots = []   # 每個 slot = 共用同一個值的 C 參數位置清單
         for c in range(2):
@@ -135,7 +141,7 @@ def refit(views, p, kbs):
     return out
 
 
-def tune(views, mode, init=DEFAULT, max_sweeps=60, log=print):
+def tune(views, mode, init, max_sweeps=60, log=print):
     slots, x, expand = make_param_map(mode, init)
     scale = np.maximum(np.abs(x), 10)
     kbs = refit(views, expand(x), None)
@@ -175,17 +181,20 @@ def linear_upper_bound(v_tr, v_te):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('npz')
-    ap.add_argument('--mode', default='untied', choices=['untied', 'tied'])
+    # 正式方案只認 tied，untied 留給研究用手動指定
+    ap.add_argument('--mode', default='tied', choices=['untied', 'tied'])
     ap.add_argument('--out', default='tuned.json')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--init', help='從既有參數檔起爬（迭代輪次用）')
+    ap.add_argument('--dll', default='../../ai.dll', help='對拍與預設參數的來源')
     a = ap.parse_args()
-    init = json.load(open(a.init)) if a.init else DEFAULT
+    default = load_default(a.dll)
+    init = json.load(open(a.init)) if a.init else default
 
     d, v1, v2 = load_views(a.npz)
     # 對拍：numpy 聚合分必須與 C 端 evaluate 逐筆相同
     for c, (v, ev) in enumerate(((v1, d['ev1']), (v2, d['ev2']))):
-        diff = np.count_nonzero(v.score(DEFAULT[c * PER:(c + 1) * PER]) != ev)
+        diff = np.count_nonzero(v.score(default[c * PER:(c + 1) * PER]) != ev)
         assert diff == 0, f"aggregator mismatch on color {c + 1}: {diff} positions"
     print(f"aggregator == C evaluate on all {len(d['gid'])} positions x 2 views")
 
@@ -194,12 +203,12 @@ def main():
     views_te = [v1.subset(te), v2.subset(te)]
     print(f"train {tr.sum()} / test {te.sum()} positions  (games {len(np.unique(d['gid']))})")
 
-    kbs0 = refit(views_tr, DEFAULT, None)
+    kbs0 = refit(views_tr, default, None)
     tuned, kbs = tune(views_tr, a.mode, init)
 
     print("\n              black-view            white-view")
     print("              train     test        train     test")
-    for name, p, kb in (('const', None, None), ('default', DEFAULT, kbs0), ('tuned', tuned, kbs)):
+    for name, p, kb in (('const', None, None), ('default', default, kbs0), ('tuned', tuned, kbs)):
         row = []
         for c in range(2):
             for vs in (views_tr, views_te):
@@ -218,12 +227,12 @@ def main():
         for c in range(2):
             for off in (W_ATK, W_DEF):
                 i = c * PER + off + k
-                cells.append(f"{DEFAULT[i]:>6}->{tuned[i]:<6}")
+                cells.append(f"{default[i]:>6}->{tuned[i]:<6}")
         print(f"  {NAMES[k]:4s} " + '  '.join(cells))
     for c in range(2):
         b = c * PER
-        print(f"  color {c + 1} bonus {DEFAULT[b + BONUS:b + BONUS + 5]} -> {tuned[b + BONUS:b + BONUS + 5]}"
-              f"  defnum {DEFAULT[b + DEF_NUM]}->{tuned[b + DEF_NUM]}  extra {DEFAULT[b + EXTRA_NUM]}->{tuned[b + EXTRA_NUM]}")
+        print(f"  color {c + 1} bonus {default[b + BONUS:b + BONUS + 5]} -> {tuned[b + BONUS:b + BONUS + 5]}"
+              f"  defnum {default[b + DEF_NUM]}->{tuned[b + DEF_NUM]}  extra {default[b + EXTRA_NUM]}->{tuned[b + EXTRA_NUM]}")
     json.dump(tuned, open(a.out, 'w'))
     print(f"\nwrote {a.out}")
 

@@ -61,6 +61,7 @@ def main():
     for _ in range(a.random):
         base = [(c + dx, c + dy, p) for dx, dy, p in rng.choice(OPENINGS)]
         openings.append(engine.random_opening(rng, lib, base, rng.randint(2, 6)))
+    assert openings, "開局池是空的：至少要給 --rif 或 --random N 其中一個"
 
     with mp.Pool(a.jobs, _init, (os.path.abspath(a.dll), _params(a.A), _params(a.B))) as pool:
         res = pool.map(_pair, openings, chunksize=2)
@@ -68,9 +69,9 @@ def main():
     n = len(scores)
     total = sum(scores)
     wins2, split, loss2 = scores.count(2.0), sum(1 for s in scores if 0 < s < 2), scores.count(0.0)
-    # 配對差異的標準誤：每對的 A 得分減 1，取樣本標準差
-    dev = [s - 1.0 for s in scores]
-    sd = math.sqrt(sum(d * d for d in dev) / max(n - 1, 1))
+    # 配對差異的標準誤：離差取自樣本均值
+    mean = total / n
+    sd = math.sqrt(sum((s - mean) ** 2 for s in scores) / max(n - 1, 1))
     se = sd / math.sqrt(n) / 2          # 換算成勝率的標準誤
     print(f"{n} pairs ({2 * n} games): A {total:.1f} / {2 * n}  = {total / (2 * n) * 100:.1f}%  "
           f"(±{1.96 * se * 100:.1f}% 95% CI)")

@@ -15,6 +15,7 @@ import engine
 
 
 def parse(path):
+    """每行: 走法序列 x,y,p ... | nopen=N result=W，格式同 datagen.py 的輸出。"""
     games = []
     for line in open(path):
         seq, meta = line.split('|')

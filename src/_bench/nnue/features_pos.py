@@ -19,6 +19,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'texel'))
 import engine  # noqa: E402
+from features import parse  # noqa: E402
 
 DX = (1, 1, 0, -1)
 DY = (0, 1, 1, 1)
@@ -76,17 +77,6 @@ def symmetries(board, n):
         out.append(r.tolist())
         out.append(np.fliplr(r).tolist())
     return out
-
-
-def parse(path):
-    """每行: 走法序列 x,y,p ... | nopen=N result=W，格式同 datagen.py 的輸出。"""
-    games = []
-    for line in open(path):
-        seq, meta = line.split('|')
-        moves = [tuple(map(int, t.split(','))) for t in seq.split()]
-        kv = dict(t.split('=') for t in meta.split())
-        games.append((moves, int(kv['nopen']), int(kv['result'])))
-    return games
 
 
 def main():

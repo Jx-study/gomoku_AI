@@ -42,6 +42,7 @@ a.txt
 b.txt
 wuziqi.py
 test.c
+src/player_wins.log
 test.exe
 
 src/_bench/lib/ai_profiled_core.generated.c

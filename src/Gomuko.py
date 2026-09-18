@@ -395,6 +395,15 @@ class GomokuGame:
         result = ai_lib.checkWin(ctypes.byref(c_board), 0, const.BOARD_MAX-1, 0, const.BOARD_MAX-1, player) != 0
         return result
 
+    # 玩家勝利時記錄棋譜，供之後覆盤或當測資用；AI 勝利不記（只在乎 AI 輸的局）
+    def record_player_win(self, ai):
+        with open("player_wins.log", "a", encoding="utf-8") as f:
+            f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} 玩家勝, {len(self.board.moves)}手, AI執{'黑' if ai == 1 else '白'} ===\n")
+            for x, y, mover in self.board.moves:
+                who = "AI" if mover == ai else "player"
+                f.write(f"{who} ({x}, {y})\n")
+            f.write("\n")
+
     # Ai回合
     def ai_move(self, ai):
         bestx = ctypes.c_int()
@@ -504,6 +513,7 @@ class GomokuGame:
                         self.window.update_notice(f"AI花了{self.roundCounter // 2}手才勝利!")
                     else:
                         self.window.update_notice("恭喜玩家!")
+                        self.record_player_win(ai)
                     # 處理游戲結束后的操作
                     end_undo = False
                     point = self.window.get_click()

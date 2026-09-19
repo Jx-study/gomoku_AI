@@ -40,8 +40,8 @@ def _lib_filename(tag=""):
     if system == "Windows":
         return f"ai_{tag}.dll" if tag else "ai.dll"
     if system == "Darwin":
-        return f"libai_{tag}.dylib" if tag else "libai.dylib"
-    return f"libai_{tag}.so" if tag else "libai.so"
+        return f"ai_{tag}.dylib" if tag else "ai.dylib"
+    return f"ai_{tag}.so" if tag else "ai.so"
 
 
 GCC = shutil.which("gcc")

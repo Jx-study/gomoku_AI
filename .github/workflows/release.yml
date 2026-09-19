@@ -4,6 +4,13 @@ on:
   push:
     tags: ["v[0-9]*", "*-v[0-9]*"]
   workflow_dispatch:   # 手動觸發：只建置不發佈，用於驗證流程
+  # release-please.yml 呼叫入口；GITHUB_TOKEN 打的 tag 不會觸發 push 事件
+  workflow_call:
+    inputs:
+      tag:
+        description: 要發佈的 tag
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -28,6 +35,8 @@ jobs:
             artifact: Gomoku-macos
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}   # 空字串沿用觸發事件的 ref
 
       - uses: actions/setup-python@v5
         with:
@@ -80,7 +89,7 @@ jobs:
 
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -89,6 +98,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: artifacts/**/*
           # release-please 已建好含 CHANGELOG 的 Release，這裡只附加安裝說明。
           # 不加 append_body 的話 body 會覆蓋掉 CHANGELOG。

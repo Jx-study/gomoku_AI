@@ -51,3 +51,4 @@ src/_bench/_count_*_tmp/
 src/_bench/**/games*.txt
 src/_bench/**/*.npz
 src/_bench/**/*.dllhash
+src/_bench/texel/_tmp/

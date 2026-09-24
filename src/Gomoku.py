@@ -405,13 +405,20 @@ class GomokuGame:
         return result
 
     # 玩家勝利時記錄棋譜，供之後覆盤或當測資用；AI 勝利不記（只在乎 AI 輸的局）
+    # 只在開發環境（GOMOKU_DEV=1）寫入，一般使用者跑起來不留檔
+    # 寫檔失敗（例如唯讀目錄）直接略過，不影響對局
     def record_player_win(self, ai):
-        with open("player_wins.log", "a", encoding="utf-8") as f:
-            f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} 玩家勝, {len(self.board.moves_history)}手, AI執{'黑' if ai == 1 else '白'} ===\n")
-            for x, y, mover in self.board.moves_history:
-                who = "AI" if mover == ai else "player"
-                f.write(f"{who} ({x}, {y})\n")
-            f.write("\n")
+        if os.environ.get("GOMOKU_DEV") != "1":
+            return
+        try:
+            with open("player_wins.log", "a", encoding="utf-8") as f:
+                f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} 玩家勝, {len(self.board.moves_history)}手, AI執{'黑' if ai == 1 else '白'} ===\n")
+                for x, y, mover in self.board.moves_history:
+                    who = "AI" if mover == ai else "player"
+                    f.write(f"{who} ({x}, {y})\n")
+                f.write("\n")
+        except OSError:
+            pass
 
     # Ai回合
     def ai_move(self, ai):

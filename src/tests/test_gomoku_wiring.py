@@ -179,6 +179,7 @@ class TestRecordPlayerWin:
             game.board.state.play(x, y, player)
 
         monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GOMOKU_DEV", "1")
         game.record_player_win(2)          # AI 執白
 
         log = (tmp_path / "player_wins.log").read_text(encoding="utf-8")

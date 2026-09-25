@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.0](https://github.com/Jx-study/gomoku_AI/compare/v1.0.0...v1.1.0) (2026-09-25)
+
+
+### Features
+
+* **eval:** tune evaluate weights via Texel self-play ([0573329](https://github.com/Jx-study/gomoku_AI/commit/0573329a1bec4b38511e8324dc91773e9e7cad08))
+
+
+### Performance Improvements
+
+* **build:** compile the engine with -O2 by default ([1e29d93](https://github.com/Jx-study/gomoku_AI/commit/1e29d93fbee87834517395b2129f0cf01d3e4e5e))
+* **types:** raise white search depth from 7 to 9 ([e149b0b](https://github.com/Jx-study/gomoku_AI/commit/e149b0bfc47cf89a530d7d244390876d41173077))
+
+
+### Bug Fixes
+
+* **Gomoku:** write player_wins.log only under GOMOKU_DEV ([7a443e6](https://github.com/Jx-study/gomoku_AI/commit/7a443e6fed7d19dc001092d295b67104ff1753b8))
+* **workflow:** release-please packaging trigger ([407f1fd](https://github.com/Jx-study/gomoku_AI/commit/407f1fd839ba12d942ae5967f1a317faad12882e))
+
 ## 1.0.0 (2026-09-18)
 
 

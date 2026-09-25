@@ -165,3 +165,24 @@ class TestForbiddenCheckerWiring:
         )
         assert game.check_valid_move(x, y, 1) is False
         assert calls == []
+
+
+class TestRecordPlayerWin:
+    """玩家勝利時寫棋譜：存取的是 GameHistory 實際有的屬性"""
+
+    def test_writes_log_without_attribute_error(self, game, mid, tmp_path, monkeypatch):
+        """`GameHistory` 只有 `moves_history`，沒有 `moves`。
+
+        取錯名字會在玩家獲勝當下拋 AttributeError，正好砸在這個功能要記錄的那一局。
+        """
+        for (x, y, player) in [(mid, mid, 1), (mid, mid + 1, 2), (mid + 1, mid + 1, 1)]:
+            game.board.state.play(x, y, player)
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GOMOKU_DEV", "1")
+        game.record_player_win(2)          # AI 執白
+
+        log = (tmp_path / "player_wins.log").read_text(encoding="utf-8")
+        assert "玩家勝, 3手, AI執白" in log
+        assert f"AI ({mid}, {mid + 1})" in log          # 白棋那手記成 AI
+        assert f"player ({mid}, {mid})" in log          # 黑棋那手記成 player

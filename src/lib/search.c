@@ -196,6 +196,9 @@ static void findBestMoveImpl(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *b
 // 對外入口：只在這裡開關 idxValid，保證有效期不跨越回 Python 的邊界
 // 用包裝函式而非在 Impl 每個 return 前設偽，改動內部提前返回時不會漏設
 void findBestMove(int board[BOARD_MAX][BOARD_MAX], int *bestX, int *bestY, int ai, int minX, int maxX, int minY, int maxY, int roundCounter) {
+    // 先寫哨兵，Impl 的提前返回路徑就不必各自負責寫回
+    *bestX = -1;
+    *bestY = -1;
     idxValid = true;
     findBestMoveImpl(board, bestX, bestY, ai, minX, maxX, minY, maxY, roundCounter);
     idxValid = false;

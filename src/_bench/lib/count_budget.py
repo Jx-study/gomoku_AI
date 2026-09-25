@@ -36,9 +36,10 @@ DEFAULT_SRC = os.path.join(LIB_DIR, "ai_unity.c")
 # 中間檔放 repo 內而非系統暫存區：Windows 的應用程式控制原則會擋掉暫存區裡的執行檔
 WORKDIR = os.path.join(ROOT, "_count_budget_tmp")
 
-# 落子/撤銷收斂進 placeStone/removeStone 之後，呼叫端應有 12 處；
-# 對不上表示 ai.c 的落子形式改了，計數點要跟著搬
-EXPECTED_WRITES = 12
+# 落子/撤銷收斂進 placeStone/removeStone 之後，呼叫端應有 14 處：
+# 原本 12 處 + judgeMove 雙三推進模擬新增的一對（見 lines.c 的 idxValid 分支）；
+# 對不上表示落子形式又改了，計數點要跟著搬
+EXPECTED_WRITES = 14
 
 # 鄰格計數表一次落子要更新的格數：5×5 減中心
 ADJ_UPDATE_COST = 24
@@ -108,12 +109,13 @@ PROBES = [
      "    g_placements++;"),
 ]
 
-# 四處候選迴圈（endGame / sortMoves ×2 / listFivePoints / listFourMoves 共用同一個形式），
-# 縮排不同所以用行錨點；每次迴圈讀 1 格 board[y][x]
+# 候選迴圈共 6 處（endGame ×1、sortMoves ×3：策略走法/通用走法/空候選 fallback、
+# vcf.c 的 vcfFindWin/getVcfNodes 各 ×1）共用同一個形式，縮排不同所以用行錨點；
+# 每次迴圈讀 1 格 board[y][x]
 CAND_PROBE = re.compile(
     r"^([ \t]*)(if \(board\[y\]\[x\] != 0 \|\| !hasAdjacentPiece\(board, x, y\)\) continue;)$", re.M)
 CAND_PROBE_ENDGAME = "                if (board[y][x] == 0 && hasAdjacentPiece(board, x, y)) {"
-EXPECTED_CAND_LOOPS = 5
+EXPECTED_CAND_LOOPS = 6
 
 COUNTERS = ["g_adj_calls", "g_adj_cells", "g_adj_hits", "g_run_calls", "g_run_cells",
             "g_checkline", "g_wins_calls", "g_judge_calls", "g_judge_deep",

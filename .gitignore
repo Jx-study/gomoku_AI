@@ -43,9 +43,12 @@ a.txt
 b.txt
 wuziqi.py
 test.c
+src/player_wins.log
 test.exe
 
-# 由 src/_bench/lib/gen_profiled.py 從 ai.c 生成，不入版控
 src/_bench/lib/ai_profiled_core.generated.c
-# bench.py 的中間目錄，跑完就刪，異常中斷時可能殘留
 src/_bench/_count_*_tmp/
+src/_bench/**/games*.txt
+src/_bench/**/*.npz
+src/_bench/**/*.dllhash
+src/_bench/texel/_tmp/

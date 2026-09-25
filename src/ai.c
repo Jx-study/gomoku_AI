@@ -61,8 +61,9 @@ int vcfProbe(int board[BOARD_MAX][BOARD_MAX], int attacker, int *wx, int *wy) {
 }
 
 // AI回合
+/* 無合法走法時回傳 bestx = besty = -1，呼叫端應視為和局而非非法落子 */
 void aiRound(int board[BOARD_MAX][BOARD_MAX], int ai, int roundCounter,int* bestx, int* besty) {
-    int x, y;
+    int x = -1, y = -1;   // 哨兵值：各分支都找不到合法點時原樣回傳
     int minX, maxX, minY, maxY;
     getBounds(board, &minX, &maxX, &minY, &maxY);
     if(ai == 1){ // 黑棋

@@ -23,6 +23,14 @@ bool hasAdjacentPiece(int board[BOARD_MAX][BOARD_MAX], int x, int y) {
     return false;
 }
 
+// 通用走法的合法性判斷：非空位、有鄰子、黑棋不犯禁手
+// sortMoves 的一般迴圈與零候選 fallback 共用，避免兩處各自維護同一條規則
+static inline bool isCandidateLegal(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
+    if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) return false;
+    if (player == 1 && checkUnValid(board, x, y, player) != 1) return false;
+    return true;
+}
+
 // 大到小排序
 int Big_Small(const void* a, const void* b) {
     Move *moveA = (Move *)a;
@@ -178,8 +186,7 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     for (int x = minX; x <= maxX; x++) {
         for (int y = minY; y <= maxY; y++) {
             // 跳过无效位置；便宜的條件先過濾，禁手判定要掃線
-            if (board[y][x] != 0 || !hasAdjacentPiece(board, x, y)) continue;
-            if (player == 1 && checkUnValid(board, x, y, player) != 1) continue;
+            if (!isCandidateLegal(board, x, y, player)) continue;
 
             // 快速评估位置价值
             int score = quickEvaluate(board, x, y, minX, maxX, minY, maxY, player);
@@ -190,10 +197,17 @@ void sortMoves(int board[BOARD_MAX][BOARD_MAX], Move* moves, int *count, int min
     }
 
     // 錯誤檢查和排序
+    // 保底：0 分孤立點會被上面的 if 濾光，仍需回傳合法點
     if (*count == 0) {
-        printf("Error: No valid moves found! Board position might be invalid.\n");
-        return;
+        for (int x = minX; x <= maxX && *count == 0; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                if (!isCandidateLegal(board, x, y, player)) continue;
+                moves[(*count)++] = (Move){x, y, 0};
+                break;
+            }
+        }
     }
+    if (*count == 0) return;  // 搜索框內真的無合法點，findBestMove 會留下 -1 哨兵
 
     qsort(moves, *count, sizeof(Move), Big_Small);
 }

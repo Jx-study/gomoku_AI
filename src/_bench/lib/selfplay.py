@@ -111,6 +111,8 @@ def play_game(black, white, opening, verbose=True):
     rc = len(opening) + 1
     engines = {1: black, 2: white}
     while rc <= MAX_ROUNDS:
+        if len(moves) == BOARD_MAX * BOARD_MAX:  # 盤面下滿、無人連五：和局，不算非法
+            return 0, moves, 'boardfull'
         p = 1 if rc % 2 == 1 else 2
         cb = CBoard()
         for i in range(BOARD_MAX):
@@ -119,6 +121,10 @@ def play_game(black, white, opening, verbose=True):
         bx, by = ctypes.c_int(-1), ctypes.c_int(-1)
         engines[p].aiRound(ctypes.byref(cb), p, rc, ctypes.byref(bx), ctypes.byref(by))
         x, y = bx.value, by.value
+
+        # 哨兵值：引擎找不到合法走法，不是犯規，當和局處理
+        if x == -1 and y == -1:
+            return 0, moves, 'nomove'
 
         if not (0 <= x < BOARD_MAX and 0 <= y < BOARD_MAX) or board[y][x] != 0:
             if verbose:

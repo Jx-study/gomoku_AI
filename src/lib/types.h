@@ -6,7 +6,7 @@
 #define BOARD_MAX 15
 #define MIDPOINT_X (BOARD_MAX / 2)
 #define MIDPOINT_Y (BOARD_MAX / 2)
-#define MAX_DEPTH 7 // 定義搜索深度
+#define MAX_DEPTH 9 // 定義搜索深度
 // 強制著法門檻：分數不低於此值的候選不受 top-N 截斷
 // 代理指標而非精確判定：攻防相加，普通點也可能湊到門檻以上
 // 改權重時要一併重算此值

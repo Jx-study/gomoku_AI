@@ -404,6 +404,22 @@ class GomokuGame:
         result = ai_lib.checkWin(ctypes.byref(c_board), 0, const.BOARD_MAX-1, 0, const.BOARD_MAX-1, player) != 0
         return result
 
+    # 玩家勝利時記錄棋譜，供之後覆盤或當測資用；AI 勝利不記（只在乎 AI 輸的局）
+    # 只在開發環境（GOMOKU_DEV=1）寫入，一般使用者跑起來不留檔
+    # 寫檔失敗（例如唯讀目錄）直接略過，不影響對局
+    def record_player_win(self, ai):
+        if os.environ.get("GOMOKU_DEV") != "1":
+            return
+        try:
+            with open("player_wins.log", "a", encoding="utf-8") as f:
+                f.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} 玩家勝, {len(self.board.moves_history)}手, AI執{'黑' if ai == 1 else '白'} ===\n")
+                for x, y, mover in self.board.moves_history:
+                    who = "AI" if mover == ai else "player"
+                    f.write(f"{who} ({x}, {y})\n")
+                f.write("\n")
+        except OSError:
+            pass
+
     # Ai回合
     def ai_move(self, ai):
         bestx = ctypes.c_int()
@@ -448,6 +464,12 @@ class GomokuGame:
         time.sleep(1)
 
         while True:
+            # 盤面下滿、無人連五：和局，必須在呼叫 aiRound 前擋下
+            # 已無空格可下時 aiRound 找不到合法走法，會被誤判成 AI 犯規中止。
+            if len(self.board.moves_history) == const.BOARD_MAX * const.BOARD_MAX:
+                self.window.update_notice("棋盤下滿，和局!")
+                break
+
             # 輪到誰下由 roundCounter 推導，不另外用變數追蹤：黑棋固定在奇數手、
             # 白棋在偶數手。悔棋是在 operation_button() 內部改動 roundCounter 的，
             # 那裡碰不到這個迴圈的區域變數；若另存一份 current_player，撤銷奇數
@@ -461,6 +483,10 @@ class GomokuGame:
                 start_time = time.time()
                 x, y = self.ai_move(ai)
                 end_time = time.time()
+                # 哨兵值：無合法走法（例如僅存空格對黑棋是禁手），判和不判犯規
+                if x == -1 and y == -1:
+                    self.window.update_notice("AI 無合法走法，和局!")
+                    break
             # 玩家回合
             else:
                 if self.roundCounter == 1:
@@ -507,6 +533,7 @@ class GomokuGame:
                         self.window.update_notice(f"AI花了{self.roundCounter // 2}手才勝利!")
                     else:
                         self.window.update_notice("恭喜玩家!")
+                        self.record_player_win(ai)
                     # 處理游戲結束后的操作
                     end_undo = False
                     point = self.window.get_click()
@@ -527,8 +554,8 @@ class GomokuGame:
                 time.sleep(0.5)
             elif current_player == ai:
                 # AI 回傳了非法座標。這不是玩家犯規，不能扣玩家的機會，
-                # 否則會出現「AI 自己犯規卻宣告 AI 勝利」。修好 aiRound 的
-                # 開局分支後這條路徑理論上不該再發生，保留作為診斷用的防線。
+                # 否則會出現「AI 自己犯規卻宣告 AI 勝利」。無合法走法已由
+                # 上面的哨兵判和攔下，走到這裡代表座標真的越界或撞到棋子。
                 ai_retry -= 1
                 print(f"[BUG] AI returned invalid move ({x}, {y}) at round {self.roundCounter}")
                 if ai_retry == 0:

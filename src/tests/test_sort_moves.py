@@ -123,3 +123,111 @@ class TestOpenJumpThreeDefenseIsCandidateGenerated:
         line = (ctypes.c_int * 16)()
         lib.checkLine(ctypes.byref(board), 3, 9, WHITE, line)
         assert line[11] == 1, f"(3,9) 的棋型應為碼 11（偏活跳三），實際 line={list(line)}"
+
+
+class TestSortMovesNeverEmptyWhenLegalMoveExists:
+    """僅存空格是 0 分孤立點時，sortMoves 仍須回傳該點"""
+
+    @staticmethod
+    def _checkerboard_with_one_gap(board_max, gap, phase=0):
+        """交錯填滿只留 gap 空著，該點 quickEvaluate 必為 0 分
+
+        phase 翻轉黑白相位，避開 gap 對黑棋構成禁手的相位
+        """
+        board = [[0] * board_max for _ in range(board_max)]
+        for x in range(board_max):
+            for y in range(board_max):
+                if (x, y) == gap:
+                    continue
+                board[y][x] = 1 if (x + y + phase) % 2 == 0 else 2
+        return board
+
+    def test_white_gets_the_only_remaining_legal_point(self, sort_moves):
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap, phase=0)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, WHITE)
+        assert moves, (
+            f"棋盤僅剩 {gap} 一個合法空格，sortMoves 卻回傳空列表——"
+            "候選被 quickEvaluate 的 0 分濾掉，沒有保底邏輯"
+        )
+        assert moves[0][:2] == gap
+
+    def test_black_gets_the_only_remaining_legal_point(self, sort_moves):
+        """黑棋視角：保底走法仍須通過禁手檢查"""
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap, phase=1)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, BLACK)
+        assert moves, (
+            f"棋盤僅剩 {gap} 一個合法空格，sortMoves 卻回傳空列表（黑棋視角）"
+        )
+        assert moves[0][:2] == gap
+
+    def test_black_forbidden_gap_still_returns_empty(self, sort_moves):
+        """同一張棋盤換黑棋視角：(0,0) 對黑棋是禁手（checkUnValid != 1），
+        保底邏輯必須尊重這點、不能為了「不回傳空列表」就塞一個非法點進去。
+        這裡刻意驗證反面：唯一空格違反禁手時，sortMoves 仍應回傳空列表。
+        """
+        gap = (0, 0)
+        board = self._checkerboard_with_one_gap(15, gap)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        moves = sort_moves(stones, BLACK)
+        assert not moves, (
+            f"{gap} 對黑棋是禁手，保底邏輯不應該把非法點塞進候選列表：{moves}"
+        )
+
+
+@pytest.fixture(scope="module")
+def ai_round():
+    """回傳 ai_round(stones, player, round_counter) -> (x, y)。"""
+    lib = ctypes.CDLL(LIB_PATH)
+    lib.getBoardMax.restype = ctypes.c_int
+    board_max = lib.getBoardMax()
+    board_type = (ctypes.c_int * board_max) * board_max
+
+    lib.initZobristTable()
+    lib.initTranspositionTable()
+    lib.aiRound.restype = None
+    lib.aiRound.argtypes = [
+        ctypes.POINTER(board_type), ctypes.c_int, ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
+    ]
+
+    def _call(stones, player, round_counter):
+        board = board_type()
+        for x, y, colour in stones:
+            board[y][x] = colour
+        # 灌入髒值：未初始化的座標會原樣留下，測得出來
+        bestx, besty = ctypes.c_int(12345), ctypes.c_int(6789)
+        lib.aiRound(ctypes.byref(board), player, round_counter,
+                    ctypes.byref(bestx), ctypes.byref(besty))
+        return bestx.value, besty.value
+
+    return _call
+
+
+class TestAiRoundSentinelWhenNoLegalMove:
+    """無合法走法時 aiRound 必須回傳 (-1, -1)，不能留下未初始化的座標"""
+
+    def test_returns_sentinel_when_only_gap_is_forbidden(self, ai_round):
+        """唯一空格對黑棋是禁手：sortMoves 回傳空列表，aiRound 走到哨兵路徑。
+
+        呼叫端據此判和；若沿用未初始化的堆疊內容，會被誤判成非法落子判負。
+        """
+        gap = (0, 0)
+        board = TestSortMovesNeverEmptyWhenLegalMoveExists._checkerboard_with_one_gap(15, gap)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        x, y = ai_round(stones, BLACK, len(stones) + 1)
+        assert (x, y) == (-1, -1), (
+            f"無合法走法時應回傳哨兵 (-1, -1)，實際 ({x}, {y})"
+        )
+
+    def test_returns_real_move_when_a_legal_point_exists(self, ai_round):
+        """反面：仍有合法點時不能誤回哨兵"""
+        gap = (0, 0)
+        board = TestSortMovesNeverEmptyWhenLegalMoveExists._checkerboard_with_one_gap(
+            15, gap, phase=0)
+        stones = [(x, y, board[y][x]) for y in range(15) for x in range(15) if board[y][x]]
+        x, y = ai_round(stones, WHITE, len(stones) + 1)
+        assert (x, y) == gap, f"唯一合法點是 {gap}，實際回傳 ({x}, {y})"

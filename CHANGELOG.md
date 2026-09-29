@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/Jx-study/gomoku_AI/compare/v1.1.0...v1.1.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **Gomoku:** hide console window in Windows builds ([8c4cd66](https://github.com/Jx-study/gomoku_AI/commit/8c4cd6696bae2175b264befe9d221a300cabc79e))
+* **lines:** stop counting a three whose straight-four spot makes five ([3567007](https://github.com/Jx-study/gomoku_AI/commit/35670079de810fbd8579db3d9ae30486dbc1155b))
+
 ## [1.1.0](https://github.com/Jx-study/gomoku_AI/compare/v1.0.0...v1.1.0) (2026-09-25)
 
 

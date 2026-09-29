@@ -129,8 +129,8 @@ static int countFours(int cells[11]) {
 }
 
 // 找出一個方向窗口內、能讓該方向構成三（tp>=1）的活四點盤面座標
-// 回傳找到的活四點數（0~2），座標寫進 outX/outY；不判斷同時成五，那件事
-// 交給呼叫端對這個座標跑一次 judgeMove（成五回傳 2，天然合法）
+// 回傳找到的活四點數（0~2），座標寫進 outX/outY；不判斷其他方向是否同時成五，
+// 那件事交給呼叫端對這個座標跑一次 judgeMove
 static int threeSpotsInDirection(int board[BOARD_MAX][BOARD_MAX], int x, int y,
                                   int dx, int dy, int player, int outX[2], int outY[2]) {
     int cells[11];
@@ -186,8 +186,9 @@ int judgeMove(int board[BOARD_MAX][BOARD_MAX], int x, int y, int player) {
                 int n = threeSpotsInDirection(board, x, y, dxT[i], dyT[i], player, spotX, spotY);
                 for (int k = 0; k < n; k++) {
                     // 活四點此時仍是空格，judgeMove 自己會假設落子在此判定
+                    // 回傳 2 是同時成五，落下去是五連而非活四，依 RIF 不能證明這是三
                     int r = judgeMove(board, spotX[k], spotY[k], player);
-                    if (r >= 1) { advanceable++; break; }   // 這個三能推進到合法活四
+                    if (r == 1) { advanceable++; break; }   // 這個三能推進到合法活四
                 }
             }
             if (idxValid) removeStone(board, x, y);

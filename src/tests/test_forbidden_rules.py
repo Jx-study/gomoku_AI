@@ -471,6 +471,34 @@ class TestRecursiveForbiddenIsNotImplemented:
                   + self.MAKES_LEFT_FORBIDDEN + self.MAKES_RIGHT_FORBIDDEN)
         assert is_legal(judge(stones, 7, 7))
 
+    # 水平活三 `SS*`：落 (7,7) 後兩個活四點是 (4,7) 與 (8,7)；縱向另成一個活三
+    OPEN_THREE_H = [(5, 7, BLACK), (6, 7, BLACK)]
+    OPEN_THREE_V = [(7, 5, BLACK), (7, 6, BLACK)]
+    # (4,7) 在主對角線、(8,7) 在副對角線各自恰好成五
+    FIVE_THROUGH_LEFT = [(0, 3, BLACK), (1, 4, BLACK), (2, 5, BLACK), (3, 6, BLACK)]
+    FIVE_THROUGH_RIGHT = [(12, 3, BLACK), (11, 4, BLACK), (10, 5, BLACK), (9, 6, BLACK)]
+
+    def test_straight_four_points_indeed_make_five(self, raw_judge):
+        """前置條件：兩個活四點落黑確實成五（judgeMove 回傳 2）。"""
+        stones = (self.OPEN_THREE_H + self.OPEN_THREE_V
+                  + self.FIVE_THROUGH_LEFT + self.FIVE_THROUGH_RIGHT)
+        assert raw_judge(stones, 4, 7) == 2
+        assert raw_judge(stones, 8, 7) == 2
+
+    def test_three_whose_straight_four_points_all_make_five_elsewhere(self, judge):
+        """活四點在另一方向同時成五，落下去是五連不是活四，依 RIF 該形不算三。
+
+        水平形的兩個活四點都同時成五，只剩縱向一個三，這一手合法。
+        """
+        stones = (self.OPEN_THREE_H + self.OPEN_THREE_V
+                  + self.FIVE_THROUGH_LEFT + self.FIVE_THROUGH_RIGHT)
+        assert is_legal(judge(stones, 7, 7))
+
+    def test_three_with_one_straight_four_point_making_five_still_counts(self, judge):
+        """只有一個活四點同時成五時，另一點仍能成活四，水平形仍是三，構成三三禁手。"""
+        stones = self.OPEN_THREE_H + self.OPEN_THREE_V + self.FIVE_THROUGH_LEFT
+        assert judge(stones, 7, 7) == -3
+
 
 class TestExactFive:
     def test_exact_five_legal(self, judge):
